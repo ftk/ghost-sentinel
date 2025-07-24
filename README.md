@@ -192,10 +192,10 @@ sudo ./theprotector.sh config
 
 - **Script:** `./theprotector.sh`
 - **Configuration:** `/etc/theprotector/theprotector.conf`
-- **Logs:** `/var/log/theprotector/`
-- **Alerts:** `/var/log/theprotector/alerts/`
-- **Quarantine:** `/var/log/theprotector/quarantine/`
-- **Baselines:** `/var/log/theprotector/baselines/`
+- **Logs:** `/var/log/ghost-sentinel`
+- **Alerts:** `/var/log/ghost-sentinel/alerts/`
+- **Quarantine:** `/var/log/ghost-sentinel/quarantine/`
+- **Baselines:** `/var/log/ghost-sentinel/baselines/`
 
 ## What It Detects
 
