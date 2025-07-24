@@ -60,6 +60,7 @@ PARALLEL_JOBS=2
 THREAT_INTEL_UPDATE_HOURS=6
 HONEYPOT_PORTS=("2222" "8080" "23" "21" "3389")
 API_PORT=8080
+API_PORT_DEFAULT=true
 
 # Environment detection
 IS_CONTAINER=false
@@ -73,6 +74,11 @@ HAS_YARA=false
 HAS_BCC=false
 HAS_NETCAT=false
 NETCAT_BIN="nc"
+
+# Overridable environment variables
+set +u
+[[ -n $DASHBOARD_PORT ]] && API_PORT="$DASHBOARD_PORT" && API_PORT_DEFAULT=false
+set -u
 
 # Cleanup function for proper resource management
 cleanup() {
@@ -564,17 +570,22 @@ start_api_server() {
 
     # Check if port is already in use
     if ss -tuln 2>/dev/null | grep -q ":$API_PORT "; then
-        log_info "Port $API_PORT already in use - trying alternative ports"
-        for alt_port in 8081 8082 8083 8084 8085; do
-            if ! ss -tuln 2>/dev/null | grep -q ":$alt_port "; then
-                API_PORT=$alt_port
-                break
-            fi
-        done
+        if [[ "$API_PORT_DEFAULT" == true ]]; then
+            log_info "Default port $API_PORT already in use. Trying alternative ports."
+            for alt_port in 8081 8082 8083 8084 8085; do
+                if ! ss -tuln 2>/dev/null | grep -q ":$alt_port "; then
+                    API_PORT=$alt_port
+                    break
+                fi
+            done
 
-        if ss -tuln 2>/dev/null | grep -q ":$API_PORT "; then
-            log_info "No available ports found - API server disabled"
-            return
+            if ss -tuln 2>/dev/null | grep -q ":$API_PORT "; then
+                log_info "No available ports found - API server disabled"
+                return
+            fi
+        else
+            log_info "Port $API_PORT already in use. Exiting."
+            exit 1
         fi
     fi
 
@@ -743,7 +754,7 @@ except Exception as e:
 EOF
 
     # Start API server in background
-    python3 /tmp/ghost_sentinel_api.py "$LOG_DIR" "$API_PORT" &
+    GHOST_SENTINEL_LOG_DIR="$LOG_DIR" GHOST_SENTINEL_API_PORT="$API_PORT" python3 /tmp/ghost_sentinel_api.py &
     echo $! > "$LOG_DIR/api_server.pid"
     log_info "API server started on http://127.0.0.1:$API_PORT"
 }
@@ -865,7 +876,7 @@ monitor_files_with_yara() {
 
     for location in "${scan_locations[@]}"; do
         if [[ -d "$location" ]] && [[ -r "$location" ]]; then
-            find "$location" -maxdepth 2 -type f -mtime -1 2>/dev/null | head -10 | while read file; do
+            find "$location" -maxdepth 2 -type f -mtime -1 2>/dev/null | while read -r file; do
                 # Skip very large files for performance
                 declare file_size=$(stat -c%s "$file" 2>/dev/null || echo 0)
                 if [[ $file_size -gt 1048576 ]]; then  # Skip files > 1MB
@@ -874,7 +885,8 @@ monitor_files_with_yara() {
 
                 # Perform YARA scan if available
                 if [[ "$HAS_YARA" == true ]]; then
-                    declare yara_result=$(yara -r "$YARA_RULES_DIR" "$file" 2>/dev/null || echo "")
+                    declare yara_result=""
+                    yara_result+=$(find "$YARA_RULES_DIR" -name '*.yar' -print0 | xargs -0 -I {} yara -s {} -r "$file" 2>/dev/null || echo "")
                     if [[ -n "$yara_result" ]]; then
                         log_alert $CRITICAL "YARA detection: $yara_result"
                         quarantine_file_forensic "$file"
@@ -890,7 +902,7 @@ monitor_files_with_yara() {
                         quarantine_file_forensic "$file"
                     fi
                 fi
-            done
+            done || true
         fi
     done
 }
@@ -1207,7 +1219,7 @@ update_threat_intelligence() {
         if command -v curl >/dev/null 2>&1; then
             if curl -s --max-time 30 -o "$temp_file" "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level1.netset" 2>/dev/null; then
                 # Better validation - check for IP addresses and reasonable file size
-                if [[ -s "$temp_file" ]] && [[ $(wc -l < "$temp_file" 2>/dev/null || echo 0) -gt 100 ]] && head -5 "$temp_file" | grep -q -E "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+"; then
+                if [[ -s "$temp_file" ]] && [[ $(grep -E "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" "$temp_file" | wc -l) -gt 100 ]]; then
                     mv "$temp_file" "$intel_file"
                     echo $(date +%s) > "$intel_timestamp"
                     log_info "Threat intelligence updated successfully ($(wc -l < "$intel_file" 2>/dev/null || echo 0) entries)"
@@ -1447,9 +1459,11 @@ main_enhanced() {
         modules_run+=("network")
     fi
 
-    log_info "Running file monitoring with YARA..."
-    if monitor_files_with_yara; then
-        modules_run+=("files-yara")
+    if [[ "$HAS_YARA" == true ]]; then
+        log_info "Running file monitoring with YARA..."
+        if monitor_files_with_yara; then
+            modules_run+=("files-yara")
+        fi
     fi
 
     log_info "Running process monitoring..."
@@ -1601,7 +1615,11 @@ monitor_processes() {
     done
 }
 
-monitor_files() { monitor_files_with_yara; }
+monitor_files() {
+    if [[ "$HAS_YARA" == true ]]; then
+        monitor_files_with_yara
+    fi
+}
 
 monitor_users() {
     if [[ "$MONITOR_USERS" != true ]]; then return; fi
@@ -2002,8 +2020,8 @@ case "${1:-run}" in
     read -r
     ;;
 "yara")
+    init_sentinel
     if [[ "$HAS_YARA" == true ]]; then
-        init_sentinel
         monitor_files_with_yara
     else
         echo "YARA not available - install yara package"
