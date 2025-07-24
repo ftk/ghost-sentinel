@@ -6,8 +6,10 @@
 set -euo pipefail
 
 # If --verbose is provided as argument, set -x
+VERBOSE=false
 if [[ " $* " == *" --verbose "* ]]; then
     set -x
+    VERBOSE=true
 fi
 
 # Configuration - Auto-detect user permissions and adjust paths
@@ -70,6 +72,7 @@ HAS_INOTIFY=false
 HAS_YARA=false
 HAS_BCC=false
 HAS_NETCAT=false
+NETCAT_BIN="nc"
 
 # Cleanup function for proper resource management
 cleanup() {
@@ -148,8 +151,13 @@ check_dependencies() {
     fi
 
     # Check for netcat
-    if command -v nc >/dev/null 2>&1 || command -v netcat >/dev/null 2>&1; then
+    if command -v nc >/dev/null 2>&1; then
         HAS_NETCAT=true
+        [[ "$VERBOSE" == true ]] && log_info "Detected 'nc' executable"
+    elif command -v netcat >/dev/null 2>&1; then
+        HAS_NETCAT=true
+        NETCAT_BIN="netcat"
+        [[ "$VERBOSE" == true ]] && log_info "Detected 'netcat' executable"
     fi
 
     # Warn about missing optional dependencies
@@ -501,7 +509,7 @@ start_honeypots() {
         return
     fi
 
-    log_info "Starting honeypot listeners on suspicious ports..."
+    log_info "Starting honeypot listeners on well-known ports..."
 
     for port in "${HONEYPOT_PORTS[@]}"; do
         # Check if port is already in use
@@ -515,10 +523,10 @@ start_honeypots() {
                 declare timestamp=$(date '+%Y-%m-%d %H:%M:%S')
                 declare connection_info=""
 
-                if command -v nc >/dev/null 2>&1; then
-                    connection_info=$(timeout 30 nc -l -p "$port" -s 127.0.0.1 2>&1 || true)
-                elif command -v netcat >/dev/null 2>&1; then
-                    connection_info=$(timeout 30 netcat -l -p "$port" -s 127.0.0.1 2>&1 || true)
+                connection_info=$(timeout 30 $NETCAT_BIN -l -p "$port" -s 127.0.0.1 2>&1 || true)
+                # if netcat prints specific error strings in the output, assume invalid arguments, fallback to different command
+                if echo "$connection_info" | grep -qiE 'usage:|punt!|Ncat:' &>/dev/null; then
+                    connection_info=$(timeout 30 "$NETCAT_BIN" -l 127.0.0.1 "$port" 2>&1 || true)
                 fi
 
                 if [[ -n "$connection_info" ]]; then
@@ -1407,7 +1415,7 @@ main_enhanced() {
         json_set "$JSON_OUTPUT_FILE" ".features.ebpf_monitoring" "true"
     fi
 
-    if [[ "$ENABLE_HONEYPOTS" == true ]] && [[ "$HAS_NETCAT" == true ]]; then
+    if [[ "$ENABLE_HONEYPOTS" == true ]] && [[ "$HAS_NETCAT" == true ]] && [[ $EUID -eq 0 ]]; then
         start_honeypots
         features_enabled+=("honeypots")
         json_set "$JSON_OUTPUT_FILE" ".features.honeypots" "true"
@@ -1891,11 +1899,15 @@ case "${1:-run}" in
     fi
     ;;
 "honeypot")
-    init_sentinel
-    start_honeypots
-    echo "Honeypots started. Press Ctrl+C to stop."
-    read -r
-    stop_honeypots
+    if [[ "$EUID" -eq 0 ]]; then
+        init_sentinel
+        start_honeypots
+        echo "Honeypots started. Press Ctrl+C to stop."
+        read -r
+        stop_honeypots
+    else
+        echo "Honeypots require root privileges"
+    fi
     ;;
 "api")
     init_sentinel
