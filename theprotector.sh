@@ -1,9 +1,14 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # It is free and took me about a year so use it love it or leave it
 # Production-hardened with eBPF, YARA, honeypots, and stealth detection
 
 set -euo pipefail
+
+# If --verbose is provided as argument, set -x
+if [[ " $* " == *" --verbose "* ]]; then
+    set -x
+fi
 
 # Configuration - Auto-detect user permissions and adjust paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -57,6 +62,9 @@ API_PORT=8080
 # Environment detection
 IS_CONTAINER=false
 IS_VM=false
+IS_DEBIAN=false
+IS_FEDORA=false
+IS_NIXOS=false
 HAS_JQ=false
 HAS_INOTIFY=false
 HAS_YARA=false
@@ -174,6 +182,15 @@ detect_environment() {
             IS_VM=true
         fi
     fi
+
+    # Check if running on Debian-based system
+    grep -qi "debian" /etc/os-release &>/dev/null && IS_DEBIAN=true
+
+    # Check if running on Fedora-based system (works on RHEL, CentOS, etc.)
+    grep -qi "fedora" /etc/os-release &>/dev/null && IS_FEDORA=true
+
+    # NixOS detection
+    grep -qi "nixos" /etc/os-release &>/dev/null && IS_NIXOS=true
 }
 
 # Validate script integrity with crypto verification
@@ -1340,10 +1357,14 @@ create_baseline() {
 
     # Package state (hash only for performance)
     declare pkg_hash=""
-    if command -v dpkg >/dev/null 2>&1; then
+    if [[ "$IS_DEBIAN" == true ]]; then
         pkg_hash=$(dpkg -l 2>/dev/null | sha256sum | cut -d' ' -f1)
-    elif command -v rpm >/dev/null 2>&1; then
+    elif [[ "$IS_FEDORA" == true ]]; then
         pkg_hash=$(rpm -qa --queryformat="%{NAME}-%{VERSION}-%{RELEASE}\n" 2>/dev/null | sort | sha256sum | cut -d' ' -f1)
+    fi
+
+    if [[ "$IS_NIXOS" == true ]]; then
+        pkg_hash=$(nix-store --query --requisites /run/current-system | cut -d- -f2- | sort | uniq)
     fi
 
     if [[ -n "$pkg_hash" ]]; then
