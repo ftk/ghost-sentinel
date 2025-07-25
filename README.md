@@ -70,6 +70,7 @@ sudo ./theprotector.sh install
 
 ### Required (Standard on all Linux systems)
 - bash (4.0 or higher)
+- coreutils
 - curl or wget
 - awk, grep, sed
 - netstat or ss
@@ -157,6 +158,9 @@ sudo ./theprotector.sh json
 
 # Edit configuration
 sudo ./theprotector.sh config
+
+# Launch dashboard with custom port
+DASHBOARD_PORT="8000" ./theprotector.sh dashboard
 ```
 
 ### Automated Monitoring
