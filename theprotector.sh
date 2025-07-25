@@ -205,6 +205,8 @@ detect_environment() {
 
     # NixOS detection
     grep -qi "nixos" /etc/os-release &>/dev/null && IS_NIXOS=true
+
+    true # return true in case os is not recognised to prevent triggering set -e
 }
 
 # Validate script integrity with crypto verification
