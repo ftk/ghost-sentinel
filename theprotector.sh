@@ -838,17 +838,16 @@ monitor_network_advanced() {
     log_info "Advanced network monitoring with anti-evasion..."
 
     # Use multiple tools for cross-validation
-    declare ss_output=$(ss -tulnp 2>/dev/null || echo "")
-    declare netstat_output=$(netstat -tulnp 2>/dev/null || echo "")
-    declare lsof_output=$(lsof -i -P -n 2>/dev/null || echo "")
-
     # Compare outputs to detect hiding
-    declare ss_ports=$(echo "$ss_output" | grep -oE ":[0-9]+" | sort -u | wc -l)
-    declare netstat_ports=$(echo "$netstat_output" | grep -oE ":[0-9]+" | sort -u | wc -l)
-    declare lsof_ports=$(echo "$lsof_output" | grep -oE ":[0-9]+" | sort -u | wc -l)
-
-    declare max_diff=5
-    if [[ $((ss_ports - netstat_ports)) -gt $max_diff ]] || [[ $((lsof_ports - ss_ports)) -gt $max_diff ]]; then
+    local ss_ports="$(ss -Htulnp 2>/dev/null | grep -oE ":[0-9]+ " | sort -u | wc -l)"
+    local netstat_ports="$(netstat -tulnp 2>/dev/null | tail -n +3 | grep -oE ":[0-9]+ " | sort -u | wc -l)"
+    # XXX lsof produces output which is not comparable with ss or netstat
+    local lsof_ports="$(lsof -i -P -n 2>/dev/null | sed "s/->.*/ /g" | grep -oE ":[0-9]+ " | sort -u | wc -l)"
+    
+    local diff_ss_netstat="$(( ss_ports - netstat_ports ))"
+    local diff_ss_lsof="$(( lsof_ports - ss_ports ))"
+    local max_diff=5
+    if [[ ${diff_ss_netstat#-} -gt $max_diff || ${diff_ss_lsof#-} -gt $max_diff ]]; then
         log_alert $HIGH "Network tool output inconsistency detected (ss: $ss_ports, netstat: $netstat_ports, lsof: $lsof_ports)"
     fi
 
@@ -861,7 +860,7 @@ monitor_network_advanced() {
     fi
 
     # Monitor for covert channels
-    declare icmp_traffic=$(grep "ICMP" /proc/net/snmp 2>/dev/null | tail -1 | awk '{print $3}' || echo 0)
+    local icmp_traffic=$(grep "ICMP" /proc/net/snmp 2>/dev/null | tail -1 | awk '{print $3}' || echo 0)
     if [[ $icmp_traffic -gt 1000 ]]; then
         log_alert $MEDIUM "High ICMP traffic detected: $icmp_traffic packets"
     fi
