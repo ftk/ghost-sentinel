@@ -853,14 +853,14 @@ monitor_network_advanced() {
 
     # Check for suspicious RAW sockets
     if [[ -r /proc/net/raw ]]; then
-        declare raw_sockets=$(grep -v "sl" /proc/net/raw 2>/dev/null | wc -l)
+        local raw_sockets="$(grep -v "sl" /proc/net/raw 2>/dev/null | wc -l)"
         if [[ $raw_sockets -gt 3 ]]; then
             log_alert $MEDIUM "Multiple RAW sockets detected: $raw_sockets"
         fi
     fi
 
     # Monitor for covert channels
-    local icmp_traffic=$(grep "ICMP" /proc/net/snmp 2>/dev/null | tail -1 | awk '{print $3}' || echo 0)
+    local icmp_traffic="$(grep "ICMP" /proc/net/snmp 2>/dev/null | tail -1 | awk '{print $3}')"
     if [[ $icmp_traffic -gt 1000 ]]; then
         log_alert $MEDIUM "High ICMP traffic detected: $icmp_traffic packets"
     fi
