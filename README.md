@@ -50,27 +50,27 @@ sudo pacman -S yara jq inotify-tools bcc netcat python
 ### Quick Start
 ```bash
 # Download
-git clone https://github.com/yourusername/theprotector.git
-cd theprotector
-chmod +x the_protector.sh
+git clone https://github.com/IHATEGIVINGAUSERNAME/theprotector.git
+cd theProtector/
+chmod +x theprotector.sh
 
 # Test installation
-sudo ./the_protector.sh test
+sudo ./theprotector.sh test
 
 # Run basic scan
-sudo ./the_protector.sh
+sudo ./theprotector.sh
 
 # Run enhanced monitoring
-sudo ./the_protector.sh enhanced
+sudo ./theprotector.sh enhanced
 ```
 
 ### Automated Installation
 ```bash
 # Install scheduled monitoring (hourly cron job)
-sudo ./the_protector.sh install
+sudo ./theprotector.sh install
 
 # Install systemd service (recommended for servers)
-sudo ./the_protector.sh systemd
+sudo ./theprotector.sh systemd
 ```
 
 ## Usage
@@ -79,54 +79,54 @@ sudo ./the_protector.sh systemd
 
 ```bash
 # Run standard security scan
-sudo ./the_protector.sh
+sudo ./theprotector.sh
 
 # Run enhanced monitoring with all features
-sudo ./the_protector.sh enhanced
+sudo ./theprotector.sh enhanced
 
 # Test installation and show capabilities
-sudo ./the_protector.sh test
+sudo ./theprotector.sh test
 
 # Check system status
-sudo ./the_protector.sh status
+sudo ./theprotector.sh status
 ```
 
 ### Advanced Features
 
 ```bash
 # Start web dashboard
-sudo ./the_protector.sh dashboard
+sudo ./theprotector.sh dashboard
 # Access at http://127.0.0.1:8080
 
 # Run specific monitoring modules
-sudo ./the_protector.sh yara        # YARA scanning only
-sudo ./the_protector.sh honeypot    # Network honeypots only
-sudo ./the_protector.sh ebpf        # eBPF monitoring only
+sudo ./theprotector.sh yara        # YARA scanning only
+sudo ./theprotector.sh honeypot    # Network honeypots only
+sudo ./theprotector.sh ebpf        # eBPF monitoring only
 
 # Performance mode (reduced overhead)
-sudo ./the_protector.sh performance
+sudo ./theprotector.sh performance
 ```
 
 ### Maintenance Commands
 
 ```bash
 # View real-time logs
-sudo ./the_protector.sh logs
+sudo ./theprotector.sh logs
 
 # View today's alerts
-sudo ./the_protector.sh alerts
+sudo ./theprotector.sh alerts
 
 # View JSON output
-sudo ./the_protector.sh json
+sudo ./theprotector.sh json
 
 # Update threat intelligence
-sudo ./the_protector.sh enhanced  # Automatic during scan
+sudo ./theprotector.sh enhanced  # Automatic during scan
 
 # Create new baseline
-sudo ./the_protector.sh baseline
+sudo ./theprotector.sh baseline
 
 # Clean up processes and fix issues
-sudo ./the_protector.sh cleanup
+sudo ./theprotector.sh cleanup
 ```
 
 ## Configuration
@@ -245,7 +245,7 @@ $HOME/.ghost-sentinel/logs/
 
 ### Starting API Server
 ```bash
-sudo ./the_protector.sh api
+sudo ./theprotector.sh api
 # Access dashboard at http://127.0.0.1:8080
 ```
 
@@ -285,7 +285,7 @@ SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
 ### Cron Scheduling
 ```bash
 # Manual cron entry (automatic with 'install' command)
-0 * * * * /path/to/the_protector.sh enhanced >/dev/null 2>&1
+0 * * * * /path/to/theprotector.sh enhanced >/dev/null 2>&1
 ```
 
 ## Troubleshooting
@@ -294,8 +294,8 @@ SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
 
 **Permission Denied**
 ```bash
-chmod +x the_protector.sh
-sudo ./the_protector.sh test
+chmod +x ./theprotector.sh
+sudo ././theprotector.sh test
 ```
 
 **eBPF Not Working**
@@ -315,13 +315,13 @@ sudo ss -tulnp | grep :8080
 
 # Use different port
 export DASHBOARD_PORT=8081
-sudo ./the_protector.sh api
+sudo ./theprotector.sh api
 ```
 
 **High Resource Usage**
 ```bash
 # Enable performance mode
-sudo ./the_protector.sh performance
+sudo ./theprotector.sh performance
 
 # Or configure limits in sentinel.conf
 PERFORMANCE_MODE=true
@@ -332,19 +332,19 @@ PARALLEL_JOBS=1
 ### Debug Mode
 ```bash
 # Enable verbose output
-sudo ./the_protector.sh --verbose enhanced
+sudo ./theprotector.sh --verbose enhanced
 ```
 
 ### Reset and Cleanup
 ```bash
 # Fix common issues
-sudo ./the_protector.sh cleanup
+sudo ./theprotector.sh cleanup
 
 # Reset integrity checks after updates
-sudo ./the_protector.sh reset-integrity
+sudo ./theprotector.sh reset-integrity
 
 # Recreate baseline
-sudo ./the_protector.sh baseline
+sudo ./theprotector.sh baseline
 ```
 
 ## Performance Considerations
@@ -395,10 +395,10 @@ git clone https://github.com/yourusername/theprotector.git
 cd theprotector
 
 # Run shellcheck for code quality
-shellcheck the_protector.sh
+shellcheck theprotector.sh
 
 # Test across environments
-sudo ./the_protector.sh test
+sudo ./theprotector.sh test
 ```
 
 ### Adding Detection Rules

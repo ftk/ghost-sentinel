@@ -223,7 +223,7 @@ validate_script_integrity() {
             echo "Current:  $current_hash"
             echo ""
             echo "This is normal after script updates. To reset:"
-            echo "  sudo ./the_protector.sh reset-integrity"
+            echo "  sudo ./theprotector.sh reset-integrity"
             echo ""
             read -p "Continue anyway? (y/N): " -n 1 -r
             echo
@@ -844,7 +844,7 @@ monitor_network_advanced() {
     local netstat_ports="$(netstat -tulnp 2>/dev/null | tail -n +3 | grep -oE ":[0-9]+ " | sort -u | wc -l)"
     # XXX lsof produces output which is not comparable with ss or netstat
     local lsof_ports="$(lsof -i -P -n 2>/dev/null | sed "s/->.*/ /g" | grep -oE ":[0-9]+ " | sort -u | wc -l)"
-    
+
     local diff_ss_netstat="$(( ss_ports - netstat_ports ))"
     local diff_ss_lsof="$(( lsof_ports - ss_ports ))"
     local max_diff=5
@@ -1970,7 +1970,7 @@ case "${1:-run}" in
     fi
 
     echo -e "${GREEN}✓ Cleanup completed - all issues resolved${NC}"
-    echo "You can now run: sudo ./the_protector.sh test"
+    echo "You can now run: sudo ./theprotector.sh test"
     ;;
 "status")
     echo "Ghost Sentinel v2.3 Status:"
