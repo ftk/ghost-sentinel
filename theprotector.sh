@@ -35,6 +35,7 @@ QUARANTINE_DIR="$LOG_DIR/quarantine"
 JSON_OUTPUT_FILE="$LOG_DIR/latest_scan.json"
 THREAT_INTEL_DIR="$LOG_DIR/threat_intel"
 YARA_RULES_DIR="$LOG_DIR/yara_rules"
+SCRIPTS_DIR="$LOG_DIR/scripts"
 HONEYPOT_LOG="$LOG_DIR/honeypot.log"
 EBPF_LOG="$LOG_DIR/ebpf_events.log"
 
@@ -418,7 +419,7 @@ start_ebpf_monitoring() {
     log_info "Starting eBPF-based kernel monitoring..."
 
     # Monitor process execution
-    cat > "/tmp/ghost_sentinel_execsnoop.py" << 'EOF'
+    cat > "$SCRIPTS_DIR/ghost_sentinel_execsnoop.py" << 'EOF'
 #!/usr/bin/env python3
 import sys
 import time
@@ -493,7 +494,7 @@ EOF
 
     # Start eBPF monitoring in background
     if command -v python3 >/dev/null 2>&1; then
-        python3 /tmp/ghost_sentinel_execsnoop.py &
+        python3 "$SCRIPTS_DIR/ghost_sentinel_execsnoop.py" &
         echo $! > "$LOG_DIR/ebpf_monitor.pid"
         log_info "eBPF process monitoring started"
     fi
@@ -507,7 +508,7 @@ stop_ebpf_monitoring() {
         fi
         rm -f "$LOG_DIR/ebpf_monitor.pid"
     fi
-    rm -f /tmp/ghost_sentinel_execsnoop.py
+    rm -f "$SCRIPTS_DIR/ghost_sentinel_execsnoop.py"
 }
 
 # Honeypot implementation for detecting scanning/attacks
@@ -593,7 +594,7 @@ start_api_server() {
 
     log_info "Starting REST API server on localhost:$API_PORT..."
 
-    cat > "/tmp/ghost_sentinel_api.py" << 'EOF'
+    cat > "$SCRIPTS_DIR/ghost_sentinel_api.py" << 'EOF'
 #!/usr/bin/env python3
 import json
 import http.server
@@ -756,7 +757,7 @@ except Exception as e:
 EOF
 
     # Start API server in background
-    GHOST_SENTINEL_LOG_DIR="$LOG_DIR" GHOST_SENTINEL_API_PORT="$API_PORT" python3 /tmp/ghost_sentinel_api.py &
+    GHOST_SENTINEL_LOG_DIR="$LOG_DIR" GHOST_SENTINEL_API_PORT="$API_PORT" python3 "$SCRIPTS_DIR/ghost_sentinel_api.py" &
     echo $! > "$LOG_DIR/api_server.pid"
     log_info "API server started on http://127.0.0.1:$API_PORT"
 }
@@ -769,7 +770,7 @@ stop_api_server() {
         fi
         rm -f "$LOG_DIR/api_server.pid"
     fi
-    rm -f /tmp/ghost_sentinel_api.py
+    rm -f "$SCRIPTS_DIR/ghost_sentinel_api.py"
 }
 
 # Anti-evasion detection for advanced threats
@@ -953,13 +954,14 @@ quarantine_file_forensic() {
 # Initialize enhanced directory structure
 init_sentinel() {
     # Create directories FIRST
-    for dir in "$LOG_DIR" "$BASELINE_DIR" "$ALERTS_DIR" "$QUARANTINE_DIR" "$BACKUP_DIR" "$THREAT_INTEL_DIR" "$YARA_RULES_DIR"; do
+    for dir in "$LOG_DIR" "$BASELINE_DIR" "$ALERTS_DIR" "$QUARANTINE_DIR" "$BACKUP_DIR" "$THREAT_INTEL_DIR" "$YARA_RULES_DIR" "$SCRIPTS_DIR"; do
         if ! mkdir -p "$dir" 2>/dev/null; then
             echo -e "${RED}[ERROR]${NC} Cannot create directory: $dir"
             echo "Please run as root or ensure write permissions"
             exit 1
         fi
     done
+    chmod 700 "$SCRIPTS_DIR"
 
     # Load configuration BEFORE doing anything else
     load_config_safe
