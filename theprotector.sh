@@ -843,7 +843,7 @@ monitor_network_advanced() {
     local ss_ports="$(ss -Htulnp 2>/dev/null | grep -oE ":[0-9]+ " | sort -u | wc -l)"
     local netstat_ports="$(netstat -tulnp 2>/dev/null | tail -n +3 | grep -oE ":[0-9]+ " | sort -u | wc -l)"
     # XXX lsof produces output which is not comparable with ss or netstat
-    local lsof_ports="$(lsof -i -P -n 2>/dev/null | sed "s/->.*/ /g" | grep -oE ":[0-9]+ " | sort -u | wc -l)"
+    local lsof_ports="$(lsof -i -P -n 2>/dev/null | grep -vF -- '->' | grep -oE ":[0-9]+ " | sort -u | wc -l)"
 
     local diff_ss_netstat="$(( ss_ports - netstat_ports ))"
     local diff_ss_lsof="$(( lsof_ports - ss_ports ))"
