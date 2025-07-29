@@ -1599,7 +1599,7 @@ monitor_processes() {
     log_info "Basic process monitoring..."
 
     # Check for suspicious processes
-    declare suspicious_procs=("nc" "netcat" "socat" "ncat")
+    declare suspicious_procs=("^nc" "netcat" "socat" "ncat")
     for proc in "${suspicious_procs[@]}"; do
         if pgrep -f "$proc" >/dev/null 2>&1; then
             pgrep -f "$proc" 2>/dev/null | head -3 | while read pid; do
