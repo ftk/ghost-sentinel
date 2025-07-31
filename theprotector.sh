@@ -513,8 +513,8 @@ stop_ebpf_monitoring() {
 
 # Honeypot implementation for detecting scanning/attacks
 start_honeypots() {
-    if [[ "$HAS_NETCAT" != true ]]; then
-        log_info "Netcat not available - honeypots disabled"
+    if ! command -v python3 >/dev/null 2>&1; then
+        log_info "python3 not available - honeypots disabled"
         return
     fi
 
@@ -532,11 +532,7 @@ start_honeypots() {
                 declare timestamp=$(date '+%Y-%m-%d %H:%M:%S')
                 declare connection_info=""
 
-                connection_info=$(timeout 30 $NETCAT_BIN -l -p "$port" -s 127.0.0.1 2>&1 || true)
-                # if netcat prints specific error strings in the output, assume invalid arguments, fallback to different command
-                if echo "$connection_info" | grep -qiE 'usage:|punt!|Ncat:' &>/dev/null; then
-                    connection_info=$(timeout 30 "$NETCAT_BIN" -l 127.0.0.1 "$port" 2>&1 || true)
-                fi
+                connection_info="$(python3 -c 'import socket; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("'"${HONEYPOT_BINDADDR-127.0.0.1}"'", '"$port"')); s.listen(1); conn, addr = s.accept(); print(f"Connected: {addr}"); conn.settimeout(10); print(conn.recv(1024)); conn.close()' 2>&1)"
 
                 if [[ -n "$connection_info" ]]; then
                     echo "[$timestamp] HONEYPOT_HIT: Port $port - $connection_info" >> "$HONEYPOT_LOG"
