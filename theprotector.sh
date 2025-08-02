@@ -1426,7 +1426,7 @@ main_enhanced() {
         json_set "$JSON_OUTPUT_FILE" ".features.ebpf_monitoring" "true"
     fi
 
-    if [[ "$ENABLE_HONEYPOTS" == true ]] && [[ "$HAS_NETCAT" == true ]] && [[ $EUID -eq 0 ]]; then
+    if [[ "$ENABLE_HONEYPOTS" == true ]] && [[ $EUID -eq 0 ]]; then
         start_honeypots
         features_enabled+=("honeypots")
         json_set "$JSON_OUTPUT_FILE" ".features.honeypots" "true"
