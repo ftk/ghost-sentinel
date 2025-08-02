@@ -810,7 +810,7 @@ detect_anti_evasion() {
 
     # Detect modified system calls (if root)
     if [[ $EUID -eq 0 ]] && [[ -r /proc/kallsyms ]]; then
-        declare suspicious_symbols=$(grep -E "(hijacked|hook|detour)" /proc/kallsyms 2>/dev/null || echo "")
+        declare suspicious_symbols=$(grep -E "(hijack|detour)" /proc/kallsyms 2>/dev/null | grep -vE '(setup_detour_execution$|arch_uretprobe_hijack_return_addr)' || echo "")
         if [[ -n "$suspicious_symbols" ]]; then
             log_alert $CRITICAL "Suspicious kernel symbols detected: $suspicious_symbols"
         fi
