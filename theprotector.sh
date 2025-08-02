@@ -1390,6 +1390,9 @@ create_baseline() {
         dpkg --get-selections | sort -u > "$BASELINE_DIR/packages_list.txt"
     elif [[ "$IS_FEDORA" == true ]]; then
         pkg_hash=$(rpm -qa --queryformat="%{NAME}-%{VERSION}-%{RELEASE}\n" 2>/dev/null | sort | sha256sum | cut -d' ' -f1)
+    elif command -v pacman > /dev/null 2>/dev/null; then
+        pacman -Qq | sort -u > "$BASELINE_DIR/packages_list.txt"
+        pkg_hash=$(pacman -Q | sort | sha256sum | cut -d' ' -f1)
     fi
 
     if [[ "$IS_NIXOS" == true ]]; then
