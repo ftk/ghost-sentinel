@@ -934,6 +934,10 @@ quarantine_file_forensic() {
             strings "$file" | head -100 > "$forensic_dir/${quarantine_name}.strings" 2>/dev/null || true
         fi
 
+        if [[ "${QUARANTINE_ENABLE-true}" == "false" ]]; then
+          return
+        fi
+
         # Move to quarantine
         if mv "$file" "$QUARANTINE_DIR/$quarantine_name" 2>/dev/null; then
             log_info "File quarantined with forensics: $file -> $QUARANTINE_DIR/$quarantine_name"
