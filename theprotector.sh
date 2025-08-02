@@ -507,6 +507,11 @@ stop_ebpf_monitoring() {
             kill "$ebpf_pid" 2>/dev/null || true
         fi
         rm -f "$LOG_DIR/ebpf_monitor.pid"
+
+        if [[ -s "$EBPF_LOG" ]]; then
+            log_alert "$MEDIUM" "EBPF found $(wc -l "$EBPF_LOG") suspicious execs: $(tail -n 1 "$EBPF_LOG")"
+            mv "$EBPF_LOG" "$EBPF_LOG.$(date +%FT%T).txt"
+        fi
     fi
     rm -f "$SCRIPTS_DIR/ghost_sentinel_execsnoop.py"
 }
