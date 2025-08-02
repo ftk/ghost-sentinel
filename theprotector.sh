@@ -1387,6 +1387,7 @@ create_baseline() {
     declare pkg_hash=""
     if [[ "$IS_DEBIAN" == true ]]; then
         pkg_hash=$(dpkg -l 2>/dev/null | sha256sum | cut -d' ' -f1)
+        dpkg --get-selections | sort -u > "$BASELINE_DIR/packages_list.txt"
     elif [[ "$IS_FEDORA" == true ]]; then
         pkg_hash=$(rpm -qa --queryformat="%{NAME}-%{VERSION}-%{RELEASE}\n" 2>/dev/null | sort | sha256sum | cut -d' ' -f1)
     fi
