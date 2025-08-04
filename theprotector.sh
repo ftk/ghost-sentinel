@@ -6,10 +6,8 @@
 set -euo pipefail
 
 # If --verbose is provided as argument, set -x
-VERBOSE=false
 if [[ " $* " == *" --verbose "* ]]; then
     set -x
-    VERBOSE=true
 fi
 
 # Configuration - Auto-detect user permissions and adjust paths
@@ -19,20 +17,12 @@ SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_NAME"
 LOCK_FILE="/tmp/ghost-sentinel-$USER.lock"
 PID_FILE="/tmp/ghost-sentinel-$USER.pid"
 
-# Smart path selection based on permissions
-if [[ $EUID -eq 0 ]]; then
-    LOG_DIR="/var/log/ghost-sentinel"
-    BACKUP_DIR="/var/backups/ghost-sentinel"
-else
-    LOG_DIR="$HOME/.ghost-sentinel/logs"
-    BACKUP_DIR="$HOME/.ghost-sentinel/backups"
-fi
+LOG_DIR="/var/log/ghost-sentinel"
 
 CONFIG_FILE="$SCRIPT_DIR/sentinel.conf"
 BASELINE_DIR="$LOG_DIR/baseline"
 ALERTS_DIR="$LOG_DIR/alerts"
 QUARANTINE_DIR="$LOG_DIR/quarantine"
-JSON_OUTPUT_FILE="$LOG_DIR/latest_scan.json"
 THREAT_INTEL_DIR="$LOG_DIR/threat_intel"
 YARA_RULES_DIR="$LOG_DIR/yara_rules"
 SCRIPTS_DIR="$LOG_DIR/scripts"
@@ -55,13 +45,8 @@ MEDIUM=3
 LOW=4
 
 # Performance and security controls
-MAX_FIND_DEPTH=2
-SCAN_TIMEOUT=180
-PARALLEL_JOBS=2
 THREAT_INTEL_UPDATE_HOURS=6
 HONEYPOT_PORTS=("2222" "8080" "23" "21" "3389")
-API_PORT=8080
-API_PORT_DEFAULT=true
 
 # Environment detection
 IS_CONTAINER=false
@@ -69,17 +54,9 @@ IS_VM=false
 IS_DEBIAN=false
 IS_FEDORA=false
 IS_NIXOS=false
-HAS_JQ=false
 HAS_INOTIFY=false
 HAS_YARA=false
 HAS_BCC=false
-HAS_NETCAT=false
-NETCAT_BIN="nc"
-
-# Overridable environment variables
-set +u
-[[ -n $DASHBOARD_PORT ]] && API_PORT="$DASHBOARD_PORT" && API_PORT_DEFAULT=false
-set -u
 
 # Cleanup function for proper resource management
 cleanup() {
@@ -90,9 +67,6 @@ cleanup() {
 
     # Stop eBPF monitoring
     stop_ebpf_monitoring
-
-    # Stop API server
-    stop_api_server
 
     # Clean up locks
     rm -f "$LOCK_FILE" "$PID_FILE" 2>/dev/null || true
@@ -137,11 +111,6 @@ acquire_lock() {
 
 # Enhanced dependency checking
 check_dependencies() {
-    # Check for jq
-    if command -v jq >/dev/null 2>&1; then
-        HAS_JQ=true
-    fi
-
     # Check for inotify tools
     if command -v inotifywait >/dev/null 2>&1; then
         HAS_INOTIFY=true
@@ -157,20 +126,6 @@ check_dependencies() {
         HAS_BCC=true
     fi
 
-    # Check for netcat
-    if command -v nc >/dev/null 2>&1; then
-        HAS_NETCAT=true
-        [[ "$VERBOSE" == true ]] && log_info "Detected 'nc' executable"
-    elif command -v netcat >/dev/null 2>&1; then
-        HAS_NETCAT=true
-        NETCAT_BIN="netcat"
-        [[ "$VERBOSE" == true ]] && log_info "Detected 'netcat' executable"
-    fi
-
-    # Warn about missing optional dependencies
-    if [[ "$HAS_JQ" == false ]]; then
-        log_info "jq not found - JSON output will be basic"
-    fi
     if [[ "$HAS_YARA" == false ]]; then
         log_info "YARA not found - malware scanning disabled"
     fi
@@ -208,64 +163,6 @@ detect_environment() {
     grep -qi "nixos" /etc/os-release &>/dev/null && IS_NIXOS=true
 
     true # return true in case os is not recognised to prevent triggering set -e
-}
-
-# Validate script integrity with crypto verification
-validate_script_integrity() {
-    declare script_hash_file="$LOG_DIR/.script_hash"
-    declare current_hash=$(sha256sum "$SCRIPT_PATH" 2>/dev/null | cut -d' ' -f1)
-
-    if [[ -f "$script_hash_file" ]]; then
-        declare stored_hash=$(cat "$script_hash_file" 2>/dev/null || echo "")
-        if [[ -n "$stored_hash" ]] && [[ "$current_hash" != "$stored_hash" ]]; then
-            log_alert $CRITICAL "Script integrity check failed - possible tampering detected"
-            echo "Expected: $stored_hash"
-            echo "Current:  $current_hash"
-            echo ""
-            echo "This is normal after script updates. To reset:"
-            echo "  sudo ./theprotector.sh reset-integrity"
-            echo ""
-            read -p "Continue anyway? (y/N): " -n 1 -r
-            echo
-            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                exit 1
-            fi
-        fi
-    fi
-
-    # Update stored hash
-    echo "$current_hash" > "$script_hash_file"
-}
-
-# Safe JSON handling without jq dependency
-json_set() {
-    declare file="$1"
-    declare key="$2"
-    declare value="$3"
-
-    if [[ "$HAS_JQ" == true ]]; then
-        declare tmp_file=$(mktemp)
-        jq "$key = \"$value\"" "$file" > "$tmp_file" 2>/dev/null && mv "$tmp_file" "$file"
-    else
-        # Fallback: simple key-value replacement
-        if grep -q "\"${key#.}\":" "$file" 2>/dev/null; then
-            sed -i "s/\"${key#.}\": *\"[^\"]*\"/\"${key#.}\": \"$value\"/" "$file" 2>/dev/null || true
-        fi
-    fi
-}
-
-json_add_alert() {
-    declare level="$1"
-    declare message="$2"
-    declare timestamp="$3"
-
-    if [[ "$HAS_JQ" == true ]]; then
-        declare tmp_file=$(mktemp)
-        jq ".alerts += [{\"level\": $level, \"message\": \"$message\", \"timestamp\": \"$timestamp\"}]" "$JSON_OUTPUT_FILE" > "$tmp_file" 2>/dev/null && mv "$tmp_file" "$JSON_OUTPUT_FILE"
-    else
-        # Fallback: append to simple log format
-        echo "{\"level\": $level, \"message\": \"$message\", \"timestamp\": \"$timestamp\"}" >> "$LOG_DIR/alerts.jsonl"
-    fi
 }
 
 # Initialize YARA rules for advanced malware detection
@@ -508,7 +405,7 @@ stop_ebpf_monitoring() {
         rm -f "$LOG_DIR/ebpf_monitor.pid"
 
         if [[ -s "$EBPF_LOG" ]]; then
-            log_alert "$MEDIUM" "EBPF found $(wc -l "$EBPF_LOG") suspicious execs: $(tail -n 1 "$EBPF_LOG")"
+            log_alert "$MEDIUM" "EBPF found $(wc -l < "$EBPF_LOG") suspicious execs: $(tail -n 1 "$EBPF_LOG")"
             mv "$EBPF_LOG" "$EBPF_LOG.$(date +%FT%T).txt"
         fi
     fi
@@ -562,215 +459,6 @@ stop_honeypots() {
         done < "$LOG_DIR/honeypot.pids"
         rm -f "$LOG_DIR/honeypot.pids"
     fi
-}
-
-# REST API server for dashboard integration
-start_api_server() {
-    if ! command -v python3 >/dev/null 2>&1; then
-        log_info "Python3 not available - API server disabled"
-        return
-    fi
-
-    # Check if port is already in use
-    if ss -tuln 2>/dev/null | grep -q ":$API_PORT "; then
-        if [[ "$API_PORT_DEFAULT" == true ]]; then
-            log_info "Default port $API_PORT already in use. Trying alternative ports."
-            for alt_port in 8081 8082 8083 8084 8085; do
-                if ! ss -tuln 2>/dev/null | grep -q ":$alt_port "; then
-                    API_PORT=$alt_port
-                    break
-                fi
-            done
-
-            if ss -tuln 2>/dev/null | grep -q ":$API_PORT "; then
-                log_info "No available ports found - API server disabled"
-                return
-            fi
-        else
-            log_info "Port $API_PORT already in use. Exiting."
-            exit 1
-        fi
-    fi
-
-    log_info "Starting REST API server on localhost:$API_PORT..."
-
-    cat > "$SCRIPTS_DIR/ghost_sentinel_api.py" << 'EOF'
-#!/usr/bin/env python3
-import json
-import http.server
-import socketserver
-import os
-import sys
-import threading
-import time
-from urllib.parse import urlparse, parse_qs
-
-LOG_DIR = os.environ.get('GHOST_SENTINEL_LOG_DIR', '/var/log/ghost-sentinel')
-API_PORT = int(os.environ.get('GHOST_SENTINEL_API_PORT', '8080'))
-
-class GhostSentinelHandler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        parsed_path = urlparse(self.path)
-
-        if parsed_path.path == '/api/status':
-            self.send_json_response(self.get_status())
-        elif parsed_path.path == '/api/alerts':
-            self.send_json_response(self.get_recent_alerts())
-        elif parsed_path.path == '/api/scan':
-            self.send_json_response(self.get_latest_scan())
-        elif parsed_path.path == '/api/honeypot':
-            self.send_json_response(self.get_honeypot_activity())
-        elif parsed_path.path == '/':
-            self.send_dashboard()
-        else:
-            self.send_error(404, "Not Found")
-
-    def send_json_response(self, data):
-        self.send_response(200)
-        self.send_header('Content-type', 'application/json')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.end_headers()
-        self.wfile.write(json.dumps(data).encode())
-
-    def send_dashboard(self):
-        dashboard_html = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Ghost Sentinel Dashboard</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; background: #1a1a1a; color: #fff; }
-        .container { max-width: 1200px; margin: 0 auto; }
-        .card { background: #2d2d2d; padding: 20px; margin: 10px 0; border-radius: 8px; }
-        .alert-critical { border-left: 5px solid #ff4444; }
-        .alert-high { border-left: 5px solid #ff8800; }
-        .alert-medium { border-left: 5px solid #0088ff; }
-        .alert-low { border-left: 5px solid #00ff88; }
-        .status-good { color: #00ff88; }
-        .status-warning { color: #ff8800; }
-        .status-critical { color: #ff4444; }
-        h1 { color: #00ff88; }
-        .refresh { float: right; cursor: pointer; color: #0088ff; }
-    </style>
-    <script>
-        function refreshData() {
-            fetch('/api/status').then(r => r.json()).then(data => {
-                document.getElementById('status').innerHTML = JSON.stringify(data, null, 2);
-            });
-            fetch('/api/alerts').then(r => r.json()).then(data => {
-                let html = '';
-                data.forEach(alert => {
-                    let className = 'alert-' + alert.level;
-                    html += `<div class="card ${className}"><strong>${alert.level.toUpperCase()}</strong>: ${alert.message}<br><small>${alert.timestamp}</small></div>`;
-                });
-                document.getElementById('alerts').innerHTML = html;
-            });
-        }
-        setInterval(refreshData, 30000);
-        window.onload = refreshData;
-    </script>
-</head>
-<body>
-    <div class="container">
-        <h1>🛡️ Ghost Sentinel v2.3 Dashboard <span class="refresh" onclick="refreshData()">🔄 Refresh</span></h1>
-        <div class="card">
-            <h2>System Status</h2>
-            <pre id="status">Loading...</pre>
-        </div>
-        <div class="card">
-            <h2>Recent Alerts</h2>
-            <div id="alerts">Loading...</div>
-        </div>
-    </div>
-</body>
-</html>
-        """
-
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html')
-        self.end_headers()
-        self.wfile.write(dashboard_html.encode())
-
-    def get_status(self):
-        return {
-            "version": "2.3",
-            "timestamp": time.strftime('%Y-%m-%d %H:%M:%S'),
-            "status": "active",
-            "log_dir": LOG_DIR
-        }
-
-    def get_recent_alerts(self):
-        alerts_file = os.path.join(LOG_DIR, 'alerts', time.strftime('%Y%m%d') + '.log')
-        alerts = []
-
-        if os.path.exists(alerts_file):
-            with open(alerts_file, 'r') as f:
-                for line in f.readlines()[-20:]:  # Last 20 alerts
-                    if '[LEVEL:' in line:
-                        parts = line.strip().split('] ', 2)
-                        if len(parts) >= 3:
-                            timestamp = parts[0][1:]  # Remove leading [
-                            level_part = parts[1]
-                            message = parts[2]
-
-                            level_map = {'1': 'critical', '2': 'high', '3': 'medium', '4': 'low'}
-                            level_num = level_part.split(':')[1]
-                            level = level_map.get(level_num, 'unknown')
-
-                            alerts.append({
-                                'timestamp': timestamp,
-                                'level': level,
-                                'message': message
-                            })
-
-        return alerts
-
-    def get_latest_scan(self):
-        scan_file = os.path.join(LOG_DIR, 'latest_scan.json')
-        if os.path.exists(scan_file):
-            with open(scan_file, 'r') as f:
-                return json.load(f)
-        return {}
-
-    def get_honeypot_activity(self):
-        honeypot_file = os.path.join(LOG_DIR, 'honeypot.log')
-        activity = []
-
-        if os.path.exists(honeypot_file):
-            with open(honeypot_file, 'r') as f:
-                for line in f.readlines()[-10:]:  # Last 10 events
-                    activity.append(line.strip())
-
-        return {"events": activity}
-
-# Set environment variables
-os.environ['GHOST_SENTINEL_LOG_DIR'] = sys.argv[1] if len(sys.argv) > 1 else LOG_DIR
-os.environ['GHOST_SENTINEL_API_PORT'] = sys.argv[2] if len(sys.argv) > 2 else str(API_PORT)
-
-try:
-    with socketserver.TCPServer(("127.0.0.1", API_PORT), GhostSentinelHandler) as httpd:
-        print(f"Ghost Sentinel API server running on http://127.0.0.1:{API_PORT}")
-        httpd.serve_forever()
-except Exception as e:
-    print(f"API server error: {e}")
-    sys.exit(1)
-EOF
-
-    # Start API server in background
-    GHOST_SENTINEL_LOG_DIR="$LOG_DIR" GHOST_SENTINEL_API_PORT="$API_PORT" python3 "$SCRIPTS_DIR/ghost_sentinel_api.py" &
-    echo $! > "$LOG_DIR/api_server.pid"
-    log_info "API server started on http://127.0.0.1:$API_PORT"
-}
-
-stop_api_server() {
-    if [[ -f "$LOG_DIR/api_server.pid" ]]; then
-        declare api_pid=$(cat "$LOG_DIR/api_server.pid" 2>/dev/null || echo "")
-        if [[ -n "$api_pid" ]] && kill -0 "$api_pid" 2>/dev/null; then
-            kill "$api_pid" 2>/dev/null || true
-        fi
-        rm -f "$LOG_DIR/api_server.pid"
-    fi
-    rm -f "$SCRIPTS_DIR/ghost_sentinel_api.py"
 }
 
 # Anti-evasion detection for advanced threats
@@ -991,7 +679,7 @@ quarantine_file_forensic() {
 # Initialize enhanced directory structure
 init_sentinel() {
     # Create directories FIRST
-    for dir in "$LOG_DIR" "$BASELINE_DIR" "$ALERTS_DIR" "$QUARANTINE_DIR" "$BACKUP_DIR" "$THREAT_INTEL_DIR" "$YARA_RULES_DIR" "$SCRIPTS_DIR"; do
+    for dir in "$LOG_DIR" "$BASELINE_DIR" "$ALERTS_DIR" "$QUARANTINE_DIR" "$THREAT_INTEL_DIR" "$YARA_RULES_DIR" "$SCRIPTS_DIR"; do
         if ! mkdir -p "$dir" 2>/dev/null; then
             echo -e "${RED}[ERROR]${NC} Cannot create directory: $dir"
             echo "Please run as root or ensure write permissions"
@@ -1007,7 +695,6 @@ init_sentinel() {
     check_dependencies
 
     # Initialize components
-    init_json_output
     init_yara_rules
 
     log_info "Initializing Ghost Sentinel v2.3..."
@@ -1032,50 +719,6 @@ init_sentinel() {
     fi
 }
 
-# Enhanced JSON initialization
-init_json_output() {
-    cat > "$JSON_OUTPUT_FILE" << 'EOF'
-{
-  "version": "2.3",
-  "scan_start": "",
-  "scan_end": "",
-  "hostname": "",
-  "environment": {
-    "is_container": false,
-    "is_vm": false,
-    "user": "",
-    "has_jq": false,
-    "has_inotify": false,
-    "has_yara": false,
-    "has_bcc": false,
-    "has_netcat": false
-  },
-  "summary": {
-    "total_alerts": 0,
-    "critical": 0,
-    "high": 0,
-    "medium": 0,
-    "low": 0
-  },
-  "alerts": [],
-  "performance": {
-    "scan_duration": 0,
-    "modules_run": []
-  },
-  "integrity": {
-    "script_hash": "",
-    "baseline_age": 0
-  },
-  "features": {
-    "ebpf_monitoring": false,
-    "honeypots": false,
-    "yara_scanning": false,
-    "api_server": false
-  }
-}
-EOF
-}
-
 # Load configuration with enhanced validation
 load_config_safe() {
     # Set secure defaults
@@ -1088,7 +731,6 @@ load_config_safe() {
     ENABLE_ANTI_EVASION=${ENABLE_ANTI_EVASION:-true}
     ENABLE_EBPF=${ENABLE_EBPF:-true}
     ENABLE_HONEYPOTS=${ENABLE_HONEYPOTS:-true}
-    ENABLE_API_SERVER=${ENABLE_API_SERVER:-true}
     ENABLE_YARA=${ENABLE_YARA:-true}
     SEND_EMAIL=${SEND_EMAIL:-false}
     EMAIL_RECIPIENT=${EMAIL_RECIPIENT:-""}
@@ -1139,9 +781,6 @@ log_alert() {
         # Add checksum for integrity
         echo "$(echo "$log_entry" | sha256sum | cut -d' ' -f1)" >> "$alert_file.hash" 2>/dev/null || true
     fi
-
-    # Add to JSON output
-    json_add_alert "$level" "$message" "$timestamp"
 
     # Send to syslog with facility (only if SYSLOG_ENABLED is set)
     if [[ "${SYSLOG_ENABLED:-false}" == true ]] && command -v logger >/dev/null 2>&1; then
@@ -1221,15 +860,6 @@ EOF
         curl -s --max-time 10 -X POST "$SLACK_WEBHOOK_URL" \
             -H "Content-Type: application/json" \
             -d "$payload" 2>/dev/null || true
-    fi
-
-    # Desktop notification for interactive sessions (with fallbacks)
-    if [[ -n "${DISPLAY:-}" ]]; then
-        if command -v notify-send >/dev/null 2>&1; then
-            notify-send "Ghost Sentinel" "CRITICAL: $message" --urgency=critical 2>/dev/null || true
-        elif command -v zenity >/dev/null 2>&1; then
-            zenity --error --text="Ghost Sentinel CRITICAL: $message" 2>/dev/null || true &
-        fi
     fi
 }
 
@@ -1453,18 +1083,6 @@ main_enhanced() {
 
     log_info "Ghost Sentinel v2.3 Enhanced - Starting advanced security scan..."
 
-    # Update JSON metadata
-    json_set "$JSON_OUTPUT_FILE" ".scan_start" "$(date -Iseconds)"
-    json_set "$JSON_OUTPUT_FILE" ".hostname" "$(hostname)"
-    json_set "$JSON_OUTPUT_FILE" ".environment.user" "$USER"
-    json_set "$JSON_OUTPUT_FILE" ".environment.is_container" "$IS_CONTAINER"
-    json_set "$JSON_OUTPUT_FILE" ".environment.is_vm" "$IS_VM"
-    json_set "$JSON_OUTPUT_FILE" ".environment.has_jq" "$HAS_JQ"
-    json_set "$JSON_OUTPUT_FILE" ".environment.has_inotify" "$HAS_INOTIFY"
-    json_set "$JSON_OUTPUT_FILE" ".environment.has_yara" "$HAS_YARA"
-    json_set "$JSON_OUTPUT_FILE" ".environment.has_bcc" "$HAS_BCC"
-    json_set "$JSON_OUTPUT_FILE" ".environment.has_netcat" "$HAS_NETCAT"
-
     # Initialize system
     init_sentinel
 
@@ -1474,24 +1092,20 @@ main_enhanced() {
     if [[ "$ENABLE_EBPF" == true ]] && [[ "$HAS_BCC" == true ]] && [[ $EUID -eq 0 ]]; then
         start_ebpf_monitoring
         features_enabled+=("ebpf")
-        json_set "$JSON_OUTPUT_FILE" ".features.ebpf_monitoring" "true"
     fi
 
     if [[ "$ENABLE_HONEYPOTS" == true ]] && [[ $EUID -eq 0 ]]; then
         start_honeypots
         features_enabled+=("honeypots")
-        json_set "$JSON_OUTPUT_FILE" ".features.honeypots" "true"
     fi
 
     if [[ "$ENABLE_API_SERVER" == true ]]; then
         start_api_server
         features_enabled+=("api")
-        json_set "$JSON_OUTPUT_FILE" ".features.api_server" "true"
     fi
 
     if [[ "$ENABLE_YARA" == true ]] && [[ "$HAS_YARA" == true ]]; then
         features_enabled+=("yara")
-        json_set "$JSON_OUTPUT_FILE" ".features.yara_scanning" "true"
     fi
 
     # Run monitoring modules with timeout protection
@@ -1539,12 +1153,6 @@ main_enhanced() {
     declare end_time=$(date +%s)
     declare duration=$((end_time - start_time))
 
-    # Update final JSON metadata
-    json_set "$JSON_OUTPUT_FILE" ".scan_end" "$(date -Iseconds)"
-    json_set "$JSON_OUTPUT_FILE" ".performance.scan_duration" "$duration"
-
-    # Generate comprehensive summary
-    generate_enhanced_summary "$duration" "${modules_run[@]}"
 
     log_info "Advanced security scan completed in ${duration}s"
 
@@ -1553,93 +1161,6 @@ main_enhanced() {
     fi
 }
 
-# Enhanced summary with module and feature status
-generate_enhanced_summary() {
-    declare duration="$1"
-    shift
-    declare modules_run=("$@")
-
-    declare today=$(date +%Y%m%d)
-    declare alert_file="$ALERTS_DIR/$today.log"
-
-    declare alert_count=0
-    declare critical_count=0
-    declare high_count=0
-    declare medium_count=0
-    declare low_count=0
-
-    if [[ -f "$alert_file" ]]; then
-        alert_count=$(grep -c "^\[" "$alert_file" 2>/dev/null | head -1 || echo 0)
-        critical_count=$(grep -c "CRITICAL" "$alert_file" 2>/dev/null | head -1 || echo 0)
-        high_count=$(grep -c "HIGH" "$alert_file" 2>/dev/null | head -1 || echo 0)
-        medium_count=$(grep -c "MEDIUM" "$alert_file" 2>/dev/null | head -1 || echo 0)
-        low_count=$(grep -c "LOW" "$alert_file" 2>/dev/null | head -1 || echo 0)
-    fi
-
-    echo
-    echo -e "${CYAN}=== GHOST SENTINEL v2.3 ADVANCED SECURITY SUMMARY ===${NC}"
-    echo -e "${YELLOW}Scan Duration: ${duration}s${NC}"
-    echo -e "${YELLOW}Modules Run: ${#modules_run[@]} (${modules_run[*]})${NC}"
-    echo -e "${YELLOW}Total Alerts: $alert_count${NC}"
-    echo -e "${RED}Critical: $critical_count${NC}"
-    echo -e "${YELLOW}High: $high_count${NC}"
-    echo -e "${BLUE}Medium: $medium_count${NC}"
-    echo -e "${GREEN}Low: $low_count${NC}"
-    echo -e "${BLUE}Environment: Container=$IS_CONTAINER, VM=$IS_VM${NC}"
-    echo -e "${BLUE}Capabilities: YARA=$HAS_YARA, eBPF=$HAS_BCC, jq=$HAS_JQ${NC}"
-    echo -e "${CYAN}Logs: $LOG_DIR${NC}"
-    echo -e "${CYAN}JSON Output: $JSON_OUTPUT_FILE${NC}"
-
-    # Show active advanced features
-    declare active_features=()
-    if [[ -f "$LOG_DIR/ebpf_monitor.pid" ]]; then
-        active_features+=("eBPF Monitoring")
-    fi
-    if [[ -f "$LOG_DIR/honeypot.pids" ]]; then
-        active_features+=("Honeypots")
-    fi
-    if [[ -f "$LOG_DIR/api_server.pid" ]]; then
-        active_features+=("API Server")
-    fi
-
-    if [[ ${#active_features[@]} -gt 0 ]]; then
-        echo -e "${PURPLE}Active Features: ${active_features[*]}${NC}"
-    fi
-
-    # API server info
-    if [[ -f "$LOG_DIR/api_server.pid" ]]; then
-        echo -e "${CYAN}Dashboard: http://127.0.0.1:$API_PORT${NC}"
-    fi
-
-    if [[ $critical_count -gt 0 ]] || [[ $high_count -gt 0 ]]; then
-        echo -e "\n${RED}Priority Alerts:${NC}"
-        grep -E "(CRITICAL|HIGH)" "$alert_file" 2>/dev/null | tail -5 | while read line; do
-            declare level=$(echo "$line" | grep -o "\[LEVEL:[0-9]\]" | grep -o "[0-9]")
-            declare msg=$(echo "$line" | cut -d']' -f3- | sed 's/^ *//')
-            if [[ "$level" == "1" ]]; then
-                echo -e "${RED}  🚨 CRITICAL: $msg${NC}"
-            else
-                echo -e "${YELLOW}  ⚠️  HIGH: $msg${NC}"
-            fi
-        done
-    else
-        echo -e "${GREEN}✓ No critical threats detected${NC}"
-    fi
-
-    # Integrity status
-    declare baseline_age=0
-    if [[ -f "$BASELINE_DIR/.initialized" ]]; then
-        baseline_age=$(( ($(date +%s) - $(stat -c %Y "$BASELINE_DIR/.initialized" 2>/dev/null || echo $(date +%s))) / 86400 ))
-    fi
-    echo -e "${CYAN}Baseline Age: $baseline_age days${NC}"
-
-    if [[ $baseline_age -gt 30 ]]; then
-        echo -e "${YELLOW}⚠️  Consider updating baseline (run with 'baseline' option)${NC}"
-    fi
-}
-
-# Minimal required functions for compatibility
-monitor_network() { monitor_network_advanced; }
 
 monitor_processes() {
     if [[ "$MONITOR_PROCESSES" != true ]]; then return; fi
@@ -1722,56 +1243,6 @@ monitor_memory() {
     done
 }
 
-# Original compatibility function
-main() {
-    log_info "Ghost Sentinel v2.3 starting security scan..."
-
-    init_sentinel
-
-    monitor_network
-    monitor_processes
-    monitor_files
-    monitor_users
-    monitor_rootkits
-    monitor_memory
-
-    log_info "Security scan completed"
-
-    declare today=$(date +%Y%m%d)
-    declare alert_count=$(grep -c "^\[" "$ALERTS_DIR/$today.log" 2>/dev/null || echo 0)
-
-    if [[ $alert_count -gt 0 ]]; then
-        echo -e "${YELLOW}Security Summary: $alert_count alerts generated${NC}"
-        echo -e "${YELLOW}Check: $ALERTS_DIR/$today.log${NC}"
-    else
-        echo -e "${GREEN}Security Summary: No threats detected${NC}"
-    fi
-}
-
-# Enhanced installation with systemd integration
-install_cron() {
-    declare cron_entry="0 * * * * $SCRIPT_DIR/$SCRIPT_NAME >/dev/null 2>&1"
-
-    if command -v crontab >/dev/null 2>&1; then
-        if ! crontab -l 2>/dev/null | grep -q "ghost_sentinel"; then
-            (crontab -l 2>/dev/null; echo "$cron_entry") | crontab - 2>/dev/null || {
-                echo "Failed to install cron job - check permissions"
-                return 1
-            }
-            log_info "Ghost Sentinel installed to run hourly via cron"
-        else
-            log_info "Ghost Sentinel cron job already exists"
-        fi
-    else
-        echo "crontab not available - manual scheduling required"
-        return 1
-    fi
-
-    # Optionally create systemd service
-    if [[ $EUID -eq 0 ]] && command -v systemctl >/dev/null 2>&1; then
-        create_systemd_service
-    fi
-}
 
 # Create systemd service for enhanced integration
 create_systemd_service() {
@@ -1804,58 +1275,6 @@ EOF
     log_info "Systemd service and timer installed"
 }
 
-# Secure self-update with integrity verification
-self_update() {
-    log_info "Checking for updates with integrity verification..."
-
-    declare update_url="https://raw.githubusercontent.com/your-repo/ghost-sentinel/main/ghost_sentinel.sh"
-    declare temp_file=$(mktemp)
-    declare temp_sig=$(mktemp)
-
-    if command -v curl >/dev/null 2>&1; then
-        # Download script and signature
-        if curl -s --max-time 30 -o "$temp_file" "$update_url" && \
-           curl -s --max-time 30 -o "$temp_sig" "$update_url.sig"; then
-
-            # Verify GPG signature if available
-            if command -v gpg >/dev/null 2>&1 && [[ -s "$temp_sig" ]]; then
-                if gpg --verify "$temp_sig" "$temp_file" 2>/dev/null; then
-                    log_info "GPG signature verified"
-                else
-                    log_info "GPG verification failed - aborting update"
-                    rm -f "$temp_file" "$temp_sig"
-                    return 1
-                fi
-            fi
-
-            # Basic validation
-            if [[ -s "$temp_file" ]] && head -1 "$temp_file" | grep -q "#!/bin/bash"; then
-                # Backup current version
-                cp "$SCRIPT_PATH" "$SCRIPT_PATH.backup.$(date +%s)"
-
-                # Install update
-                chmod +x "$temp_file"
-                mv "$temp_file" "$SCRIPT_PATH"
-                rm -f "$temp_sig"
-
-                log_info "Update completed successfully"
-                log_info "Previous version backed up as $SCRIPT_PATH.backup.*"
-            else
-                log_info "Update failed - invalid file downloaded"
-                rm -f "$temp_file" "$temp_sig"
-                return 1
-            fi
-        else
-            log_info "Update failed - download error"
-            rm -f "$temp_file" "$temp_sig"
-            return 1
-        fi
-    else
-        log_info "curl not available - cannot update"
-        return 1
-    fi
-}
-
 # === MAIN EXECUTION ===
 
 # Acquire exclusive lock with stale lock detection
@@ -1863,9 +1282,6 @@ acquire_lock
 
 # Command line interface with new v2.3 options
 case "${1:-run}" in
-"install")
-    install_cron
-    ;;
 "baseline")
     FORCE_BASELINE=true
     init_sentinel
@@ -1890,74 +1306,12 @@ case "${1:-run}" in
         echo "No alerts for today"
     fi
     ;;
-"json")
-    init_sentinel
-    if [[ -f "$JSON_OUTPUT_FILE" ]]; then
-        if [[ "$HAS_JQ" == true ]]; then
-            jq . "$JSON_OUTPUT_FILE"
-        else
-            cat "$JSON_OUTPUT_FILE"
-        fi
-    else
-        echo "No JSON output available"
-    fi
-    ;;
-"test")
-    echo "Testing Ghost Sentinel v2.3..."
-    init_sentinel
-    log_alert $HIGH "Test alert - Ghost Sentinel v2.3 is working"
-    echo -e "${GREEN}✓ Test completed successfully!${NC}"
-    echo -e "${CYAN}Advanced Capabilities:${NC}"
-    echo -e "  YARA: $HAS_YARA"
-    echo -e "  eBPF: $HAS_BCC"
-    echo -e "  jq: $HAS_JQ"
-    echo -e "  inotify: $HAS_INOTIFY"
-    echo -e "  netcat: $HAS_NETCAT"
-    echo -e "${CYAN}Environment: Container=$IS_CONTAINER, VM=$IS_VM${NC}"
-    echo -e "${CYAN}Logs: $LOG_DIR${NC}"
-    echo -e "${CYAN}JSON: $JSON_OUTPUT_FILE${NC}"
-    ;;
-"enhanced"|"v2"|"v3")
-    main_enhanced
-    ;;
 "daemon")
     main_enhanced
     sleep "$2" &
     systemd-notify --ready --status=Up
     wait -n # wait until any of the processes exit (honeypots, ebpf or sleep)
     systemd-notify --stopping --status=Stopping 2>/dev/null || true # --stopping is not supported on some systems
-    ;;
-"update")
-    self_update
-    ;;
-"performance")
-    PERFORMANCE_MODE=true
-    main_enhanced
-    ;;
-"integrity")
-    # Load config first to set variables
-    load_config_safe
-    validate_script_integrity
-    echo -e "${GREEN}✓ Script integrity check completed${NC}"
-    ;;
-"reset-integrity")
-    # Reset script integrity hash after updates
-    mkdir -p "$LOG_DIR" 2>/dev/null || true
-    declare script_hash_file="$LOG_DIR/.script_hash"
-    declare current_hash=$(sha256sum "$SCRIPT_PATH" 2>/dev/null | cut -d' ' -f1)
-    echo "$current_hash" > "$script_hash_file"
-    echo -e "${GREEN}✓ Script integrity hash reset${NC}"
-    echo "Current hash: $current_hash"
-    ;;
-"fix-hostname")
-    # Fix the hostname resolution issue
-    declare current_hostname=$(hostname)
-    if ! grep -q "$current_hostname" /etc/hosts; then
-        echo "127.0.0.1 $current_hostname" | sudo tee -a /etc/hosts >/dev/null
-        echo -e "${GREEN}✓ Hostname resolution fixed${NC}"
-    else
-        echo -e "${GREEN}✓ Hostname resolution already OK${NC}"
-    fi
     ;;
 "systemd")
     if [[ $EUID -eq 0 ]]; then
@@ -1977,98 +1331,6 @@ case "${1:-run}" in
         echo "Honeypots require root privileges"
     fi
     ;;
-"api")
-    init_sentinel
-    start_api_server
-    echo "API server started on http://127.0.0.1:$API_PORT"
-    echo "Press Ctrl+C to stop."
-    read -r
-    stop_api_server
-    ;;
-"cleanup")
-    echo "Cleaning up Ghost Sentinel processes and fixing common issues..."
-
-    # Stop all running components
-    stop_honeypots
-    stop_ebpf_monitoring
-    stop_api_server
-
-    # Kill any remaining processes
-    pkill -f "ghost_sentinel" 2>/dev/null || true
-    pkill -f "ghost-sentinel" 2>/dev/null || true
-
-    # Clean up temp files
-    rm -f /tmp/ghost_sentinel_* /tmp/ghost-sentinel*
-
-    # Remove lock files
-    rm -f "$LOCK_FILE" "$PID_FILE"
-
-    # Reset script integrity hash (normal after updates)
-    mkdir -p "$LOG_DIR" 2>/dev/null || true
-    declare script_hash_file="$LOG_DIR/.script_hash"
-    declare current_hash=$(sha256sum "$SCRIPT_PATH" 2>/dev/null | cut -d' ' -f1)
-    echo "$current_hash" > "$script_hash_file"
-
-    # Fix hostname resolution if needed
-    declare current_hostname=$(hostname)
-    if ! grep -q "$current_hostname" /etc/hosts 2>/dev/null; then
-        echo "127.0.0.1 $current_hostname" | sudo tee -a /etc/hosts >/dev/null 2>&1 || true
-        echo "✓ Fixed hostname resolution"
-    fi
-
-    echo -e "${GREEN}✓ Cleanup completed - all issues resolved${NC}"
-    echo "You can now run: sudo ./theprotector.sh test"
-    ;;
-"status")
-    echo "Ghost Sentinel v2.3 Status:"
-    echo "=========================="
-
-    # Check for running processes
-    if [[ -f "$LOG_DIR/api_server.pid" ]]; then
-        declare api_pid=$(cat "$LOG_DIR/api_server.pid" 2>/dev/null || echo "")
-        if [[ -n "$api_pid" ]] && kill -0 "$api_pid" 2>/dev/null; then
-            echo -e "${GREEN}✓ API Server running (PID: $api_pid) - http://127.0.0.1:$API_PORT${NC}"
-        else
-            echo -e "${RED}✗ API Server not running${NC}"
-        fi
-    else
-        echo -e "${RED}✗ API Server not running${NC}"
-    fi
-
-    if [[ -f "$LOG_DIR/honeypot.pids" ]]; then
-        declare honeypot_count=$(wc -l < "$LOG_DIR/honeypot.pids" 2>/dev/null || echo 0)
-        echo -e "${GREEN}✓ Honeypots running: $honeypot_count${NC}"
-    else
-        echo -e "${RED}✗ Honeypots not running${NC}"
-    fi
-
-    if [[ -f "$LOG_DIR/ebpf_monitor.pid" ]]; then
-        declare ebpf_pid=$(cat "$LOG_DIR/ebpf_monitor.pid" 2>/dev/null || echo "")
-        if [[ -n "$ebpf_pid" ]] && kill -0 "$ebpf_pid" 2>/dev/null; then
-            echo -e "${GREEN}✓ eBPF Monitor running (PID: $ebpf_pid)${NC}"
-        else
-            echo -e "${RED}✗ eBPF Monitor not running${NC}"
-        fi
-    else
-        echo -e "${RED}✗ eBPF Monitor not running${NC}"
-    fi
-
-    # Show recent alerts
-    declare today=$(date +%Y%m%d)
-    if [[ -f "$ALERTS_DIR/$today.log" ]]; then
-        declare alert_count=$(grep -c "^\[" "$ALERTS_DIR/$today.log" 2>/dev/null || echo 0)
-        echo -e "${YELLOW}Alerts today: $alert_count${NC}"
-    else
-        echo -e "${GREEN}No alerts today${NC}"
-    fi
-    ;;
-"dashboard")
-    init_sentinel
-    start_api_server
-    echo -e "${GREEN}✓ Dashboard started at http://127.0.0.1:$API_PORT${NC}"
-    echo "Press Ctrl+C to stop..."
-    read -r
-    ;;
 "yara")
     init_sentinel
     if [[ "$HAS_YARA" == true ]]; then
@@ -2078,8 +1340,8 @@ case "${1:-run}" in
     fi
     ;;
 "ebpf")
+    init_sentinel
     if [[ "$HAS_BCC" == true ]] && [[ $EUID -eq 0 ]]; then
-        init_sentinel
         start_ebpf_monitoring
         echo "eBPF monitoring started. Press Ctrl+C to stop."
         read -r
@@ -2093,6 +1355,6 @@ case "${1:-run}" in
     log_alert "$HIGH" "$2"
     ;;
 *)
-    main
+    main_enhanced
     ;;
 esac
