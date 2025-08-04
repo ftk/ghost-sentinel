@@ -908,6 +908,26 @@ monitor_files_with_yara() {
             done || true
         fi
     done
+
+    # Perform online YARA monitoring
+    if [[ "$HAS_YARA" == true ]] && [[ "$HAS_INOTIFY" == "true" ]] && [[ "$PERFORMANCE_MODE" == "false" ]]; then
+    {
+        inotifywait -q -m -e close_write -r --format '%w%f' --  "${scan_locations[@]}" | while read -r file; do
+            declare file_size=$(stat -c%s "$file" 2>/dev/null || echo 0)
+            if [[ $file_size -gt 1048576 ]]; then  # Skip files > 1MB
+                continue
+            fi
+
+            declare yara_result=""
+            yara_result=$(find "$YARA_RULES_DIR" -name '*.yar' -print0 | xargs -0 -I {} yara -s {} -r "$file" 2>/dev/null || echo "")
+            if [[ -n "$yara_result" ]]; then
+                log_alert $CRITICAL "YARA detection: $yara_result"
+                quarantine_file_forensic "$file"
+            fi
+        done
+    } &
+fi
+
 }
 
 # Enhanced quarantine with YARA analysis and forensics
