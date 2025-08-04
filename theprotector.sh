@@ -866,6 +866,20 @@ monitor_network_advanced() {
     if [[ $icmp_traffic -gt 1000 ]]; then
         log_alert $MEDIUM "High ICMP traffic detected: $icmp_traffic packets"
     fi
+
+    # Check for connections to suspicious ip addresses
+    if [[ -f "$THREAT_INTEL_DIR/malicious_ips.txt" ]]; then
+        # grep ipv4 from netstat and filter out local and private ip ranges, then check if they are in the malicious ip cidr list
+        local malicious_ips="$(netstat -np 2>/dev/null | \
+        grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}'| \
+        sort -u | \
+        grep -vE '^(127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|169\.254\.|22[4-9]\.|23[0-9]\.)'  | \
+        python3 -c "import sys, ipaddress; cidrs = [ipaddress.ip_network(l.strip()) for l in open('$THREAT_INTEL_DIR/malicious_ips.txt') if l.strip() and not '#' in l]; [print(f'{ip.strip()}') for ip in sys.stdin if ip.strip() and any(ipaddress.ip_address(ip.strip()) in cidr for cidr in cidrs)];")"
+
+        if [[ -n $malicious_ips ]]; then
+            log_alert $HIGH "Detected connections to malicious ips: $malicious_ips"
+        fi
+    fi
 }
 
 # YARA-enhanced file monitoring
