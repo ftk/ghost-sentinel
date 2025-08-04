@@ -296,8 +296,8 @@ rule Reverse_Shell_Patterns {
         description = "Detects reverse shell command patterns"
         severity = "critical"
     strings:
-        $nc_bind = /nc.*-l.*-p.*[0-9]+/
-        $nc_connect = /nc.*[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+.*[0-9]+/
+        $nc_bind = /nca?t? .*-l +-p +[0-9]+/
+        $nc_connect = /nca?t? .*[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ .*[0-9]+/
         $bash_tcp = "/dev/tcp/"
         $python_socket = "socket.socket(socket.AF_INET"
         $perl_socket = "IO::Socket::INET"
