@@ -1150,7 +1150,7 @@ log_alert() {
 
     if [[ -n "$TELEGRAM_BOT_TOKEN" ]] && [[ -n "$TELEGRAM_CHAT_ID" ]]; then
         # Send to Telegram with bot token and chat ID
-        curl -s --fail -X POST --url "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" -d chat_id="${TELEGRAM_CHAT_ID}" -d text="$(hostname) ${level}: ${message}" >/dev/null || true
+        curl --max-time 5 -s --fail -X POST --url "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" -d chat_id="${TELEGRAM_CHAT_ID}" -d text="$(hostname) ${level}: ${message}" >/dev/null || echo "Telegram alert failed"
     fi
 
 
