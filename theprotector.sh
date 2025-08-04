@@ -1776,7 +1776,6 @@ install_cron() {
 # Create systemd service for enhanced integration
 create_systemd_service() {
     declare service_file="/etc/systemd/system/ghost-sentinel.service"
-    declare timer_file="/etc/systemd/system/ghost-sentinel.timer"
 
     cat > "$service_file" << EOF
 [Unit]
@@ -1784,29 +1783,23 @@ Description=Ghost Sentinel v2.3 Security Monitor
 After=network.target
 
 [Service]
-Type=oneshot
-ExecStart=$SCRIPT_PATH enhanced
+Type=notify
+# Run for an hour, then restart
+ExecStart=$SCRIPT_PATH daemon 3600
+ExecStopPost=/bin/sh -c "[ \$SERVICE_RESULT != 'success' ] && $SCRIPT_PATH alert \"Ghost sentinel systemd unit failed: \$EXIT_CODE \$EXIT_STATUS\"; exit 0"
 User=root
 StandardOutput=journal
 StandardError=journal
-EOF
-
-    cat > "$timer_file" << EOF
-[Unit]
-Description=Run Ghost Sentinel hourly
-Requires=ghost-sentinel.service
-
-[Timer]
-OnCalendar=hourly
-Persistent=true
+Restart=on-success
+RestartSec=3
 
 [Install]
-WantedBy=timers.target
+WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
-    systemctl enable ghost-sentinel.timer
-    systemctl start ghost-sentinel.timer
+    systemctl enable ghost-sentinel
+    #systemctl start ghost-sentinel # TODO: lock file problem
 
     log_info "Systemd service and timer installed"
 }
@@ -1926,6 +1919,13 @@ case "${1:-run}" in
     ;;
 "enhanced"|"v2"|"v3")
     main_enhanced
+    ;;
+"daemon")
+    main_enhanced
+    sleep "$2" &
+    systemd-notify --ready --status=Up
+    wait -n # wait until any of the processes exit (honeypots, ebpf or sleep)
+    systemd-notify --stopping --status=Stopping 2>/dev/null || true # --stopping is not supported on some systems
     ;;
 "update")
     self_update
@@ -2087,6 +2087,10 @@ case "${1:-run}" in
     else
         echo "eBPF monitoring requires root privileges and BCC tools"
     fi
+    ;;
+"alert")
+    load_config_safe
+    log_alert "$HIGH" "$2"
     ;;
 *)
     main
