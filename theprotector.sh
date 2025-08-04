@@ -1136,6 +1136,12 @@ log_alert() {
         logger -t "ghost-sentinel[$]" -p security.alert -i "$message" 2>/dev/null || true
     fi
 
+    if [[ -n "$TELEGRAM_BOT_TOKEN" ]] && [[ -n "$TELEGRAM_CHAT_ID" ]]; then
+        # Send to Telegram with bot token and chat ID
+        curl -s --fail -X POST --url "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" -d chat_id="${TELEGRAM_CHAT_ID}" -d text="$(hostname) ${level}: ${message}" >/dev/null || true
+    fi
+
+
     # Critical alerts trigger immediate response
     if [[ $level -eq $CRITICAL ]]; then
         send_critical_alert "$message"
