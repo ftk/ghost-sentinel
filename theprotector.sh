@@ -385,7 +385,6 @@ rule APT_Lateral_Movement {
         $powershell_encoded = "powershell -enc"
         $mimikatz = "sekurlsa::logonpasswords"
         $bloodhound = "SharpHound"
-        $cobalt_strike = "beacon"
     condition:
         any of them
 }
@@ -395,12 +394,12 @@ rule Data_Exfiltration {
         description = "Detects data exfiltration attempts"
         severity = "high"
     strings:
-        $curl_upload = /curl.*-T.*http/
-        $wget_post = /wget.*--post-file/
-        $nc_file = /nc.*<.*\/.*\//
-        $base64_pipe = /base64.*\|.*curl/
-        $tar_remote = /tar.*\|.*nc/
-        $scp_remote = /scp.*@/
+        $curl_upload = /curl .*-T.*http/
+        $wget_post = /wget .*--post-file/
+        $nc_file = /nca?t? .*<.*\/.*\//
+        $base64_pipe = /base64 .*\|.*curl/
+        $tar_remote = /tar .*\|.*nc/
+        $scp_remote = /scp .*@/
     condition:
         any of them
 }
