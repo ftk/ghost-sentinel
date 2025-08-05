@@ -463,7 +463,6 @@ stop_honeypots() {
 
 # Anti-evasion detection for advanced threats
 detect_anti_evasion() {
-    log_info "Running anti-evasion detection..."
 
     # Detect LD_PRELOAD hijacking
     if [[ -n "${LD_PRELOAD:-}" ]]; then
@@ -524,8 +523,6 @@ detect_anti_evasion() {
 monitor_network_advanced() {
     if [[ "$MONITOR_NETWORK" != true ]]; then return; fi
 
-    log_info "Advanced network monitoring with anti-evasion..."
-
     # Use multiple tools for cross-validation
     # Compare outputs to detect hiding
     local ss_ports="$(ss -Htulnp 2>/dev/null | grep -oE ":[0-9]+ " | sort -u | wc -l)"
@@ -571,8 +568,6 @@ monitor_network_advanced() {
 # YARA-enhanced file monitoring
 monitor_files_with_yara() {
     if [[ "$MONITOR_FILES" != true ]]; then return; fi
-
-    log_info "File monitoring with YARA malware detection..."
 
     # Scan suspicious locations with YARA
     declare scan_locations=("/tmp" "/var/tmp" "/dev/shm")
@@ -1164,7 +1159,6 @@ main_enhanced() {
 
 monitor_processes() {
     if [[ "$MONITOR_PROCESSES" != true ]]; then return; fi
-    log_info "Basic process monitoring..."
 
     # Check for suspicious processes
     declare suspicious_procs=("^nc" "netcat" "socat" "ncat")
@@ -1194,7 +1188,6 @@ monitor_files() {
 
 monitor_users() {
     if [[ "$MONITOR_USERS" != true ]]; then return; fi
-    log_info "Basic user monitoring..."
 
     # Check for new users
     if [[ -r /etc/passwd ]] && [[ -f "$BASELINE_DIR/users_baseline.txt" ]]; then
@@ -1213,7 +1206,6 @@ monitor_users() {
 
 monitor_rootkits() {
     if [[ "$MONITOR_ROOTKITS" != true ]]; then return; fi
-    log_info "Basic rootkit detection..."
 
     # Check for common rootkit indicators
     declare rootkit_paths=("/tmp/.ICE-unix/.X11-unix" "/dev/shm/.hidden" "/tmp/.hidden" "/usr/bin/..." "/usr/sbin/...")
@@ -1227,7 +1219,6 @@ monitor_rootkits() {
 
 monitor_memory() {
     if [[ "$MONITOR_MEMORY" != true ]]; then return; fi
-    log_info "Basic memory monitoring..."
 
     # Check for high memory usage
     ps aux --sort=-%mem --no-headers 2>/dev/null | head -3 | while read line; do
