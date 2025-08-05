@@ -18,7 +18,6 @@ LOCK_FILE="/tmp/ghost-sentinel-$USER.lock"
 PID_FILE="/tmp/ghost-sentinel-$USER.pid"
 
 LOG_DIR="/var/log/ghost-sentinel"
-
 CONFIG_FILE="$SCRIPT_DIR/sentinel.conf"
 BASELINE_DIR="$LOG_DIR/baseline"
 ALERTS_DIR="$LOG_DIR/alerts"
@@ -49,11 +48,6 @@ THREAT_INTEL_UPDATE_HOURS=6
 HONEYPOT_PORTS=("2222" "8080" "23" "21" "3389")
 
 # Environment detection
-IS_CONTAINER=false
-IS_VM=false
-IS_DEBIAN=false
-IS_FEDORA=false
-IS_NIXOS=false
 HAS_INOTIFY=false
 HAS_YARA=false
 HAS_BCC=false
@@ -132,37 +126,6 @@ check_dependencies() {
     if [[ "$HAS_BCC" == false ]]; then
         log_info "eBPF tools not found - kernel monitoring disabled"
     fi
-}
-
-# Detect container/VM environment
-detect_environment() {
-    # Container detection
-    if [[ -f /.dockerenv ]] || [[ -f /run/.containerenv ]] || grep -q "docker\|lxc\|containerd" /proc/1/cgroup 2>/dev/null; then
-        IS_CONTAINER=true
-    fi
-
-    # VM detection
-    if command -v systemd-detect-virt >/dev/null 2>&1; then
-        if systemd-detect-virt -q; then
-            IS_VM=true
-        fi
-    elif command -v dmidecode >/dev/null 2>&1 && [[ $EUID -eq 0 ]]; then
-        declare vendor=$(dmidecode -s system-product-name 2>/dev/null | tr '[:upper:]' '[:lower:]')
-        if [[ "$vendor" =~ (vmware|virtualbox|qemu|kvm|xen) ]]; then
-            IS_VM=true
-        fi
-    fi
-
-    # Check if running on Debian-based system
-    grep -qi "debian" /etc/os-release &>/dev/null && IS_DEBIAN=true
-
-    # Check if running on Fedora-based system (works on RHEL, CentOS, etc.)
-    grep -qi "fedora" /etc/os-release &>/dev/null && IS_FEDORA=true
-
-    # NixOS detection
-    grep -qi "nixos" /etc/os-release &>/dev/null && IS_NIXOS=true
-
-    true # return true in case os is not recognised to prevent triggering set -e
 }
 
 # Initialize YARA rules for advanced malware detection
@@ -697,15 +660,6 @@ init_sentinel() {
 
     log_info "Initializing Ghost Sentinel v2.3..."
 
-    # Detect environment
-    detect_environment
-    if [[ "$IS_CONTAINER" == true ]]; then
-        log_info "Container environment detected - adjusting monitoring"
-    fi
-    if [[ "$IS_VM" == true ]]; then
-        log_info "Virtual machine environment detected"
-    fi
-
     # Update threat intelligence
     update_threat_intelligence
 
@@ -734,16 +688,12 @@ load_config_safe() {
     EMAIL_RECIPIENT=${EMAIL_RECIPIENT:-""}
     WEBHOOK_URL=${WEBHOOK_URL:-""}
     SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-""}
-    ABUSEIPDB_API_KEY=${ABUSEIPDB_API_KEY:-""}
-    VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-""}
     SYSLOG_ENABLED=${SYSLOG_ENABLED:-true}
     PERFORMANCE_MODE=${PERFORMANCE_MODE:-false}
     ENABLE_THREAT_INTEL=${ENABLE_THREAT_INTEL:-true}
 
     # Secure whitelists with exact matching
     WHITELIST_PROCESSES=${WHITELIST_PROCESSES:-("firefox" "chrome" "nmap" "masscan" "nuclei" "gobuster" "ffuf" "subfinder" "httpx" "amass" "burpsuite" "wireshark" "metasploit" "sqlmap" "nikto" "dirb" "wpscan" "john" "docker" "containerd" "systemd" "kthreadd" "bash" "zsh" "ssh" "python3" "yara")}
-    WHITELIST_CONNECTIONS=${WHITELIST_CONNECTIONS:-("127.0.0.1" "::1" "0.0.0.0" "8.8.8.8" "1.1.1.1" "208.67.222.222" "1.0.0.1" "9.9.9.9")}
-    EXCLUDE_PATHS=${EXCLUDE_PATHS:-("/opt/metasploit-framework" "/usr/share/metasploit-framework" "/usr/share/wordlists" "/home/*/go/bin" "/tmp/nuclei-templates" "/var/lib/docker" "/var/lib/containerd" "/snap")}
     CRITICAL_PATHS=${CRITICAL_PATHS:-("/etc/passwd" "/etc/shadow" "/etc/sudoers" "/etc/ssh/sshd_config" "/etc/hosts")}
 
     # Load and validate config file
@@ -922,97 +872,6 @@ is_whitelisted_process() {
     return 1
 }
 
-is_whitelisted_connection() {
-    declare addr="$1"
-    for whitelisted in "${WHITELIST_CONNECTIONS[@]}"; do
-        if [[ "$addr" == "$whitelisted" ]]; then
-            return 0
-        fi
-    done
-    return 1
-}
-
-is_private_address() {
-    declare addr="$1"
-
-    # RFC 1918 private networks + localhost + link-local
-    if [[ "$addr" =~ ^10\. ]] || [[ "$addr" =~ ^192\.168\. ]] || [[ "$addr" =~ ^172\.(1[6-9]|2[0-9]|3[01])\. ]]; then
-        return 0
-    fi
-    if [[ "$addr" =~ ^127\. ]] || [[ "$addr" =~ ^169\.254\. ]] || [[ "$addr" == "::1" ]] || [[ "$addr" =~ ^fe80: ]]; then
-        return 0
-    fi
-
-    # Multicast and broadcast
-    if [[ "$addr" =~ ^(224\.|225\.|226\.|227\.|228\.|229\.|230\.|231\.|232\.|233\.|234\.|235\.|236\.|237\.|238\.|239\.) ]]; then
-        return 0
-    fi
-
-    return 1
-}
-
-# Enhanced threat intelligence checking
-is_malicious_ip() {
-    declare addr="$1"
-    declare intel_file="$THREAT_INTEL_DIR/malicious_ips.txt"
-
-    # Skip private addresses
-    if is_private_address "$addr"; then
-        return 1
-    fi
-
-    # Check declare threat intelligence
-    if [[ -f "$intel_file" ]]; then
-        if grep -q "^$addr" "$intel_file" 2>/dev/null; then
-            return 0
-        fi
-    fi
-
-    # Check against AbuseIPDB if API key is available
-    if [[ -n "$ABUSEIPDB_API_KEY" ]] && command -v curl >/dev/null 2>&1; then
-        declare cache_file="$THREAT_INTEL_DIR/abuseipdb_$addr"
-        declare cache_age=3600  # 1 hour cache
-
-        # Check cache first
-        if [[ -f "$cache_file" ]]; then
-            declare file_age=$(($(date +%s) - $(stat -c %Y "$cache_file" 2>/dev/null || echo 0)))
-            if [[ $file_age -lt $cache_age ]]; then
-                declare cached_result=$(cat "$cache_file" 2>/dev/null || echo "0")
-                if [[ "$cached_result" -gt 75 ]]; then
-                    return 0
-                else
-                    return 1
-                fi
-            fi
-        fi
-
-        # Query AbuseIPDB with rate limiting
-        declare response=$(curl -s --max-time 5 -G https://api.abuseipdb.com/api/v2/check \
-            --data-urlencode "ipAddress=$addr" \
-            -H "Key: $ABUSEIPDB_API_KEY" \
-            -H "Accept: application/json" 2>/dev/null || echo "")
-
-        if [[ -n "$response" ]]; then
-            declare confidence=0
-            if command -v jq >/dev/null 2>&1; then
-                confidence=$(echo "$response" | jq -r '.data.abuseConfidencePercentage // 0' 2>/dev/null || echo 0)
-            else
-                # Fallback parsing
-                confidence=$(echo "$response" | grep -o '"abuseConfidencePercentage":[0-9]*' | cut -d: -f2 || echo 0)
-            fi
-
-            # Cache the result
-            echo "$confidence" > "$cache_file"
-
-            if [[ $confidence -gt 75 ]]; then
-                return 0
-            fi
-        fi
-    fi
-
-    return 1
-}
-
 # Performance-optimized baseline creation
 create_baseline() {
     log_info "Creating optimized security baseline..."
@@ -1051,17 +910,17 @@ create_baseline() {
 
     # Package state (hash only for performance)
     declare pkg_hash=""
-    if [[ "$IS_DEBIAN" == true ]]; then
+    if grep -qi "debian" /etc/os-release &>/dev/null; then
         pkg_hash=$(dpkg -l 2>/dev/null | sha256sum | cut -d' ' -f1)
         dpkg --get-selections | sort -u > "$BASELINE_DIR/packages_list.txt"
-    elif [[ "$IS_FEDORA" == true ]]; then
+    elif grep -qi "fedora" /etc/os-release &>/dev/null; then
         pkg_hash=$(rpm -qa --queryformat="%{NAME}-%{VERSION}-%{RELEASE}\n" 2>/dev/null | sort | sha256sum | cut -d' ' -f1)
     elif command -v pacman > /dev/null 2>/dev/null; then
         pacman -Qq | sort -u > "$BASELINE_DIR/packages_list.txt"
         pkg_hash=$(pacman -Q | sort | sha256sum | cut -d' ' -f1)
     fi
 
-    if [[ "$IS_NIXOS" == true ]]; then
+    if grep -qi "nixos" /etc/os-release &>/dev/null; then
         pkg_hash=$(nix-store --query --requisites /run/current-system | cut -d- -f2- | sort | uniq)
     fi
 
@@ -1095,11 +954,6 @@ main_enhanced() {
     if [[ "$ENABLE_HONEYPOTS" == true ]] && [[ $EUID -eq 0 ]]; then
         start_honeypots
         features_enabled+=("honeypots")
-    fi
-
-    if [[ "$ENABLE_API_SERVER" == true ]]; then
-        start_api_server
-        features_enabled+=("api")
     fi
 
     if [[ "$ENABLE_YARA" == true ]] && [[ "$HAS_YARA" == true ]]; then
