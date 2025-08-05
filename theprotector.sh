@@ -302,6 +302,9 @@ rule Data_Exfiltration {
 }
 EOF
 
+    # Compile rules into a single file
+    yarac --no-warnings $YARA_RULES_DIR/*.yar "$YARA_RULES_DIR/rules.yarac"
+
     log_info "YARA rules initialized for advanced malware detection"
 }
 
@@ -584,7 +587,7 @@ monitor_files_with_yara() {
                 # Perform YARA scan if available
                 if [[ "$HAS_YARA" == true ]]; then
                     declare yara_result=""
-                    yara_result+=$(find "$YARA_RULES_DIR" -name '*.yar' -print0 | xargs -0 -I {} yara -s {} -r "$file" 2>/dev/null || echo "")
+                    yara_result+=$(yara --no-warnings --fast-scan --print-strings --recursive --compiled-rules "$YARA_RULES_DIR/rules.yarac" "$file" 2>/dev/null || echo "")
                     if [[ -n "$yara_result" ]]; then
                         log_alert $CRITICAL "YARA detection: $yara_result"
                         quarantine_file_forensic "$file"
@@ -614,7 +617,7 @@ monitor_files_with_yara() {
             fi
 
             declare yara_result=""
-            yara_result=$(find "$YARA_RULES_DIR" -name '*.yar' -print0 | xargs -0 -I {} yara -s {} -r "$file" 2>/dev/null || echo "")
+            yara_result=$(yara --no-warnings --fast-scan --print-strings --recursive --compiled-rules --timeout=1 --skip-larger=1048576 "$YARA_RULES_DIR/rules.yarac" "$file" 2>/dev/null || echo "")
             if [[ -n "$yara_result" ]]; then
                 log_alert $CRITICAL "YARA detection: $yara_result"
                 quarantine_file_forensic "$file"
