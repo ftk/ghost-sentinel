@@ -266,7 +266,7 @@ rule Data_Exfiltration {
 EOF
 
     # Compile rules into a single file
-    yarac --no-warnings $YARA_RULES_DIR/*.yar "$YARA_RULES_DIR/rules.yarac"
+    yarac --no-warnings "$YARA_RULES_DIR"/*.yar "$YARA_RULES_DIR/rules.yarac"
 
     log_info "YARA rules initialized for advanced malware detection"
 }
