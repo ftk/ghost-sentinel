@@ -493,11 +493,11 @@ monitor_network_advanced() {
     # Compare outputs to detect hiding
     local ss_ports="$(ss -Htulnp 2>/dev/null | grep -oE ":[0-9]+ " | sort -u | wc -l)"
     local netstat_ports="$(netstat -tulnp 2>/dev/null | tail -n +3 | grep -oE ":[0-9]+ " | sort -u | wc -l)"
-    local lsof_ports="$(lsof -i -P -n 2>/dev/null | grep -vF -- '->' | grep -oE ":[0-9]+ " | sort -u | wc -l)"
+    local lsof_ports="$({ lsof -i -P -n 2>/dev/null | grep -vF -- '->' | grep -oE ":[0-9]+ "; rpcinfo -p 2> /dev/null | awk 'NR>1{print ":"$4" "}' || true ; } | sort -u | wc -l)"
 
     local diff_ss_netstat="$(( ss_ports - netstat_ports ))"
     local diff_ss_lsof="$(( lsof_ports - ss_ports ))"
-    local max_diff=1
+    local max_diff=3
     if [[ ${diff_ss_netstat#-} -gt $max_diff || ${diff_ss_lsof#-} -gt $max_diff ]]; then
         log_alert $HIGH "Network tool output inconsistency detected (ss: $ss_ports, netstat: $netstat_ports, lsof: $lsof_ports)"
     fi
