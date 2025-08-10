@@ -190,12 +190,12 @@ rule Crypto_Miner_Indicators {
     strings:
         $stratum1 = "stratum+tcp://"
         $stratum2 = "stratum+ssl://"
-        $xmrig = "xmrig"
+        $xmrig = /\bxmrig\b/
         $cpuminer = "cpuminer"
         $pool1 = "pool.supportxmr.com"
         $pool2 = "xmr-usa-east1.nanopool.org"
-        $wallet = /[49][A-Za-z0-9]{94}/
-        $mining_algo = /cryptonight|scrypt|sha256|x11/
+        $wallet = /\b[49][A-Za-z0-9]{94}\b/
+        $mining_algo = /\b(cryptonight|scrypt|sha256|x11)\b/
     condition:
         any of them
 }
