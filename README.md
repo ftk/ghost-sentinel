@@ -14,6 +14,7 @@ Ghost Sentinel provides multi-layer security monitoring for Linux systems by com
 - **Anti-Evasion Detection**: Cross-validation techniques to identify hidden processes and connections
 - **Threat Intelligence Integration**: Automated updates with IP reputation checking
 - **Forensic Capabilities**: Detailed logging with integrity verification and quarantine functions
+- **Alerts**: Real-time alerts for detected threats and suspicious activities via email, webhooks, Slack or Telegram
 
 ## Requirements
 
@@ -26,7 +27,7 @@ Ghost Sentinel provides multi-layer security monitoring for Linux systems by com
 ```bash
 # Ubuntu/Debian
 sudo apt update
-sudo apt install yara bpftrace lsof python3 inotify-tools curl
+sudo apt install yara bpftrace lsof python3 inotify-tools curl bpfcc-tools python-bpfcc
 
 # Fedora/RHEL
 sudo dnf install yara inotify-tools bpftrace python3 curl
@@ -38,8 +39,9 @@ sudo pacman -S yara inotify-tools bpftrace python curl
 ### Dependency Functions
 - **yara**: Advanced malware detection rules
 - **inotify-tools**: Real-time file system monitoring
-- **bcc-tools**: eBPF kernel instrumentation
+- **bpfcc-tools**: eBPF kernel instrumentation
 - **python3**: Network honeypot implementation and advanced monitoring features
+- **curl**: Webhook notifications, suspicious IP list updates
 
 ## Installation
 
@@ -56,6 +58,7 @@ sudo ./theprotector.sh
 # Install as systemd daemon
 sudo ./theprotector.sh systemd
 sudo systemctl enable --now ghost-sentinel
+sudo journalctl -u ghost-sentinel -e
 ```
 
 ## Configuration
@@ -118,15 +121,6 @@ QUARANTINE_ENABLE=true
 - `ebpf_events.log` - Kernel-level events
 - `quarantine/` - Quarantined files with forensic data
 
-**eBPF Not Working**
-```bash
-# Check kernel version
-uname -r  # Should be 4.9+
-
-# Install BCC tools
-sudo apt install bcc-tools  # Ubuntu
-sudo dnf install bcc-tools  # Fedora
-```
 
 ### Debug Mode
 ```bash
