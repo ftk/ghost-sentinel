@@ -324,7 +324,7 @@ int syscall__execve(struct pt_regs *ctx, const char __user *filename,
 def print_event(cpu, data, size):
     event = b["events"].event(data)
     suspicious_patterns = [
-        b"nc", b"netcat", b"socat", b"/dev/tcp", b"python -c", b"perl -e",
+        b"ncat", b"/nc", b"netcat", b"socat", b"/dev/tcp", b"python -c", b"perl -e",
         b"bash -i", b"sh -i", b"wget", b"curl", b"base64"
     ]
 
