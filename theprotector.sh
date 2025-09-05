@@ -20,7 +20,6 @@ PID_FILE="/tmp/ghost-sentinel-$USER.pid"
 LOG_DIR="/var/log/ghost-sentinel"
 CONFIG_FILE="$SCRIPT_DIR/sentinel.conf"
 BASELINE_DIR="$LOG_DIR/baseline"
-ALERTS_DIR="$LOG_DIR/alerts"
 QUARANTINE_DIR="$LOG_DIR/quarantine"
 THREAT_INTEL_DIR="$LOG_DIR/threat_intel"
 YARA_RULES_DIR="$LOG_DIR/yara_rules"
@@ -28,20 +27,10 @@ SCRIPTS_DIR="$LOG_DIR/scripts"
 HONEYPOT_LOG="$LOG_DIR/honeypot.log"
 EBPF_LOG="$LOG_DIR/ebpf_events.log"
 
-# Colors for output (straight quotes only)
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-CYAN='\033[0;36m'
-NC='\033[0m'
-
-# Alert levels
-CRITICAL=1
-HIGH=2
-MEDIUM=3
-LOW=4
+# Alert levels, consistent with journald
+CRITICAL=2
+HIGH=3
+MEDIUM=4
 
 # Performance and security controls
 THREAT_INTEL_UPDATE_HOURS=6
@@ -642,10 +631,10 @@ quarantine_file_forensic() {
 # Initialize enhanced directory structure
 init_sentinel() {
     # Create directories FIRST
-    for dir in "$LOG_DIR" "$BASELINE_DIR" "$ALERTS_DIR" "$QUARANTINE_DIR" "$THREAT_INTEL_DIR" "$YARA_RULES_DIR" "$SCRIPTS_DIR"; do
+    for dir in "$LOG_DIR" "$BASELINE_DIR" "$QUARANTINE_DIR" "$THREAT_INTEL_DIR" "$YARA_RULES_DIR" "$SCRIPTS_DIR"; do
         if ! mkdir -p "$dir" 2>/dev/null; then
-            echo -e "${RED}[ERROR]${NC} Cannot create directory: $dir"
-            echo "Please run as root or ensure write permissions"
+            echo "<3>Cannot create directory: $dir" >&2
+            echo "<3>Please run as root or ensure write permissions" >&2
             exit 1
         fi
     done
@@ -660,7 +649,7 @@ init_sentinel() {
     # Initialize components
     init_yara_rules
 
-    log_info "Initializing Ghost Sentinel v2.3..."
+    log_info "Initializing Ghost Sentinel v3..."
 
     # Update threat intelligence
     update_threat_intelligence
@@ -690,7 +679,6 @@ load_config_safe() {
     EMAIL_RECIPIENT=${EMAIL_RECIPIENT:-""}
     WEBHOOK_URL=${WEBHOOK_URL:-""}
     SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-""}
-    SYSLOG_ENABLED=${SYSLOG_ENABLED:-true}
     PERFORMANCE_MODE=${PERFORMANCE_MODE:-false}
     ENABLE_THREAT_INTEL=${ENABLE_THREAT_INTEL:-true}
 
@@ -708,60 +696,21 @@ load_config_safe() {
     fi
 }
 
-# Enhanced logging with tamper resistance
+log_info() {
+    echo "<6>$1"
+}
+
 log_alert() {
     declare level=$1
     declare message="$2"
-    declare timestamp=$(date '+%Y-%m-%d %H:%M:%S')
 
-    case $level in
-        $CRITICAL) echo -e "${RED}[CRITICAL]${NC} $message" ;;
-        $HIGH)     echo -e "${YELLOW}[HIGH]${NC} $message" ;;
-        $MEDIUM)   echo -e "${BLUE}[MEDIUM]${NC} $message" ;;
-        $LOW)      echo -e "${GREEN}[LOW]${NC} $message" ;;
-    esac
+    echo "<${level}>${message}" >&2
 
-    # Write to alert file with integrity check
-    if [[ -n "$ALERTS_DIR" ]]; then
-        mkdir -p "$ALERTS_DIR" 2>/dev/null || true
-        declare alert_file="$ALERTS_DIR/$(date +%Y%m%d).log"
-        declare log_entry="[$timestamp] [LEVEL:$level] $message"
-        echo "$log_entry" >> "$alert_file" 2>/dev/null || true
-
-        # Add checksum for integrity
-        echo "$(echo "$log_entry" | sha256sum | cut -d' ' -f1)" >> "$alert_file.hash" 2>/dev/null || true
-    fi
-
-    # Send to syslog with facility (only if SYSLOG_ENABLED is set)
-    if [[ "${SYSLOG_ENABLED:-false}" == true ]] && command -v logger >/dev/null 2>&1; then
-        logger -t "ghost-sentinel[$]" -p security.alert -i "$message" 2>/dev/null || true
-    fi
-
+    # Send alerts
     if [[ -n "$TELEGRAM_BOT_TOKEN" ]] && [[ -n "$TELEGRAM_CHAT_ID" ]]; then
         # Send to Telegram with bot token and chat ID
-        curl --max-time 5 -s --fail -X POST --url "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" -d chat_id="${TELEGRAM_CHAT_ID}" -d text="$(hostname) ${level}: ${message}" >/dev/null || echo "Telegram alert failed"
+        curl --max-time 10 --silent --show-error --fail -X POST --url "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" -d chat_id="${TELEGRAM_CHAT_ID}" -d text="$(hostname) ${level}: ${message}" >/dev/null || echo "<$ERROR>Telegram alert failed" >&2
     fi
-
-
-    # Critical alerts trigger immediate response
-    if [[ $level -eq $CRITICAL ]]; then
-        send_critical_alert "$message"
-    fi
-}
-
-log_info() {
-    declare timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    echo -e "${CYAN}[INFO]${NC} $1"
-
-    if [[ -n "$LOG_DIR" ]]; then
-        mkdir -p "$LOG_DIR" 2>/dev/null || true
-        echo "[$timestamp] [INFO] $1" >> "$LOG_DIR/sentinel.log" 2>/dev/null || true
-    fi
-}
-
-# Enhanced critical alert handling with fallbacks
-send_critical_alert() {
-    declare message="$1"
 
     # Email notification with fallback check
     if [[ "$SEND_EMAIL" == true ]] && [[ -n "$EMAIL_RECIPIENT" ]]; then
@@ -786,7 +735,7 @@ send_critical_alert() {
     "attachments": [
         {
             "color": "danger",
-            "title": "🚨 Ghost Sentinel v2.3 Critical Alert",
+            "title": "Ghost Sentinel Alert",
             "text": "$message",
             "fields": [
                 {
@@ -800,7 +749,7 @@ send_critical_alert() {
                     "short": true
                 }
             ],
-            "footer": "Ghost Sentinel v2.3",
+            "footer": "Ghost Sentinel",
             "ts": $(date +%s)
         }
     ]
@@ -936,11 +885,10 @@ create_baseline() {
     log_info "Baseline created successfully"
 }
 
-# Production main function with all v2.3 features
 main_enhanced() {
     declare start_time=$(date +%s)
 
-    log_info "Ghost Sentinel v2.3 Enhanced - Starting advanced security scan..."
+    log_info "Ghost Sentinel v3 - Starting advanced security scan..."
 
     # Initialize system
     init_sentinel
@@ -1100,7 +1048,7 @@ create_systemd_service() {
 
     cat > "$service_file" << EOF
 [Unit]
-Description=Ghost Sentinel v2.3 Security Monitor
+Description=Ghost Sentinel Security Monitor
 After=network.target
 
 [Service]
@@ -1138,23 +1086,6 @@ case "${1:-run}" in
     ;;
 "config")
     ${EDITOR:-nano} "$CONFIG_FILE"
-    ;;
-"logs")
-    init_sentinel
-    if [[ -f "$LOG_DIR/sentinel.log" ]]; then
-        tail -f "$LOG_DIR/sentinel.log"
-    else
-        echo "No log file found. Run a scan first."
-    fi
-    ;;
-"alerts")
-    init_sentinel
-    declare today=$(date +%Y%m%d)
-    if [[ -f "$ALERTS_DIR/$today.log" ]]; then
-        cat "$ALERTS_DIR/$today.log"
-    else
-        echo "No alerts for today"
-    fi
     ;;
 "daemon")
     main_enhanced
