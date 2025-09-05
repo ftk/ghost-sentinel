@@ -14,8 +14,6 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_NAME"
-LOCK_FILE="/tmp/ghost-sentinel-$USER.lock"
-PID_FILE="/tmp/ghost-sentinel-$USER.pid"
 
 LOG_DIR="/var/log/ghost-sentinel"
 CONFIG_FILE="$SCRIPT_DIR/sentinel.conf"
@@ -51,46 +49,9 @@ cleanup() {
     # Stop eBPF monitoring
     stop_ebpf_monitoring
 
-    # Clean up locks
-    rm -f "$LOCK_FILE" "$PID_FILE" 2>/dev/null || true
-
     exit $exit_code
 }
 trap cleanup EXIT INT TERM
-
-# Enhanced lock management with stale lock detection
-acquire_lock() {
-    # Check for stale locks
-    if [[ -f "$LOCK_FILE" ]]; then
-        declare lock_pid=""
-        if [[ -f "$PID_FILE" ]]; then
-            lock_pid=$(cat "$PID_FILE" 2>/dev/null || echo "")
-        fi
-
-        # If PID exists and process is running, exit
-        if [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" 2>/dev/null; then
-            echo "Another instance is running (PID: $lock_pid). Exiting."
-            exit 1
-        else
-            # Clean up stale lock
-            rm -f "$LOCK_FILE" "$PID_FILE" 2>/dev/null || true
-        fi
-    fi
-
-    # Use flock if available, otherwise manual locking
-    if command -v flock >/dev/null 2>&1; then
-        exec 200>"$LOCK_FILE"
-        if ! flock -n 200; then
-            echo "Failed to acquire lock. Another instance may be running."
-            exit 1
-        fi
-    else
-        echo $$ > "$LOCK_FILE"
-    fi
-
-    # Always write PID file
-    echo $$ > "$PID_FILE"
-}
 
 # Enhanced dependency checking
 check_dependencies() {
@@ -1075,10 +1036,6 @@ EOF
 
 # === MAIN EXECUTION ===
 
-# Acquire exclusive lock with stale lock detection
-acquire_lock
-
-# Command line interface with new v2.3 options
 case "${1:-run}" in
 "baseline")
     FORCE_BASELINE=true
