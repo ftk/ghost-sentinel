@@ -1046,7 +1046,7 @@ case "${1:-run}" in
     ;;
 "daemon")
     main_enhanced
-    sleep "$2" &
+    sleep "${2-60}" &
     systemd-notify --ready --status=Up
     wait -n # wait until any of the processes exit (honeypots, ebpf or sleep)
     systemd-notify --stopping --status=Stopping 2>/dev/null || true # --stopping is not supported on some systems
@@ -1056,36 +1056,7 @@ case "${1:-run}" in
         create_systemd_service
     else
         echo "systemd integration requires root privileges"
-    fi
-    ;;
-"honeypot")
-    if [[ "$EUID" -eq 0 ]]; then
-        init_sentinel
-        start_honeypots
-        echo "Honeypots started. Press Ctrl+C to stop."
-        read -r
-        stop_honeypots
-    else
-        echo "Honeypots require root privileges"
-    fi
-    ;;
-"yara")
-    init_sentinel
-    if [[ "$HAS_YARA" == true ]]; then
-        monitor_files_with_yara
-    else
-        echo "YARA not available - install yara package"
-    fi
-    ;;
-"ebpf")
-    init_sentinel
-    if [[ "$HAS_BCC" == true ]] && [[ $EUID -eq 0 ]]; then
-        start_ebpf_monitoring
-        echo "eBPF monitoring started. Press Ctrl+C to stop."
-        read -r
-        stop_ebpf_monitoring
-    else
-        echo "eBPF monitoring requires root privileges and BCC tools"
+        exit 1
     fi
     ;;
 "alert")
