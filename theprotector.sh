@@ -990,12 +990,12 @@ monitor_memory() {
 
     # Check for high memory usage
     ps aux --sort=-%mem --no-headers 2>/dev/null | head -3 | while read line; do
-        declare mem_usage=$(echo "$line" | awk '{print $4}')
+        declare mem_usage=$(echo "$line" | awk '{print $4}' | grep -o '^[0-9]*')
         declare proc_name=$(echo "$line" | awk '{print $11}' | xargs basename 2>/dev/null)
         declare pid=$(echo "$line" | awk '{print $2}')
 
         if ! is_whitelisted_process "$proc_name"; then
-            if (( $(echo "$mem_usage > 80" | bc -l 2>/dev/null || echo 0) )); then
+            if (( mem_usage > 80 )); then
                 log_alert $MEDIUM "High memory usage: $proc_name (PID: $pid, MEM: $mem_usage%)"
             fi
         fi
