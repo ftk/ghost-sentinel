@@ -848,80 +848,49 @@ create_baseline() {
 
 main_enhanced() {
     declare start_time=$(date +%s)
-
     log_info "Ghost Sentinel v3 - Starting advanced security scan..."
 
     # Initialize system
     init_sentinel
 
     # Start advanced monitoring features
-    declare features_enabled=()
-
     if [[ "$ENABLE_EBPF" == true ]] && [[ "$HAS_BCC" == true ]] && [[ $EUID -eq 0 ]]; then
         start_ebpf_monitoring
-        features_enabled+=("ebpf")
     fi
 
     if [[ "$ENABLE_HONEYPOTS" == true ]] && [[ $EUID -eq 0 ]]; then
         start_honeypots
-        features_enabled+=("honeypots")
     fi
-
-    if [[ "$ENABLE_YARA" == true ]] && [[ "$HAS_YARA" == true ]]; then
-        features_enabled+=("yara")
-    fi
-
-    # Run monitoring modules with timeout protection
-    declare modules_run=()
 
     if [[ "$ENABLE_ANTI_EVASION" == true ]]; then
         log_info "Running anti-evasion detection..."
-        if detect_anti_evasion; then
-            modules_run+=("anti-evasion")
-        fi
+        detect_anti_evasion
     fi
 
     log_info "Running network monitoring..."
-    if monitor_network_advanced; then
-        modules_run+=("network")
-    fi
+    monitor_network_advanced
 
     if [[ "$HAS_YARA" == true ]]; then
         log_info "Running file monitoring with YARA..."
-        if monitor_files_with_yara; then
-            modules_run+=("files-yara")
-        fi
+        monitor_files_with_yara
     fi
 
     log_info "Running process monitoring..."
-    if monitor_processes; then
-        modules_run+=("processes")
-    fi
+    monitor_processes
 
     log_info "Running user monitoring..."
-    if monitor_users; then
-        modules_run+=("users")
-    fi
+    monitor_users
 
     log_info "Running rootkit detection..."
-    if monitor_rootkits; then
-        modules_run+=("rootkits")
-    fi
+    monitor_rootkits
 
     log_info "Running memory monitoring..."
-    if monitor_memory; then
-        modules_run+=("memory")
-    fi
+    monitor_memory
 
     declare end_time=$(date +%s)
     declare duration=$((end_time - start_time))
 
-
     log_info "Advanced security scan completed in ${duration}s"
-
-    if [[ ${#features_enabled[@]} -gt 0 ]]; then
-        log_info "Advanced features active: ${features_enabled[*]}"
-    fi
 }
 
 
