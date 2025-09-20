@@ -223,7 +223,7 @@ EOF
 
 # eBPF-based monitoring for kernel-level observability
 start_ebpf_monitoring() {
-    if [[ "$HAS_BCC" != true ]] || [[ $EUID -ne 0 ]]; then
+    if [[ "$HAS_BCC" != true ]] || [[ $EUID -ne 0 ]] || ! command -v python3 >/dev/null 2>&1; then
         log_info "eBPF monitoring requires root and BCC tools - skipping"
         return
     fi
@@ -236,6 +236,9 @@ start_ebpf_monitoring() {
 import sys
 import time
 from bcc import BPF
+
+ebpf_log = sys.argv[1]
+whitelist = sys.argv[2:]
 
 # eBPF program to monitor process execution
 bpf_text = """
@@ -283,9 +286,10 @@ def print_event(cpu, data, size):
 
     for pattern in suspicious_patterns:
         if pattern in filename.encode() or pattern in comm.encode():
-            with open('/var/log/ghost-sentinel/ebpf_events.log', 'a') as f:
-                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} SUSPICIOUS_EXEC: PID={event.pid} PPID={event.ppid} COMM={comm} FILE={filename}\n")
-            break
+            if not comm.encode() in whitelist:
+                with open(ebpf_log, 'a') as f:
+                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} SUSPICIOUS_EXEC: PID={event.pid} PPID={event.ppid} COMM={comm} FILE={filename}\n")
+                break
 
 try:
     b = BPF(text=bpf_text)
@@ -305,11 +309,9 @@ except Exception as e:
 EOF
 
     # Start eBPF monitoring in background
-    if command -v python3 >/dev/null 2>&1; then
-        python3 "$SCRIPTS_DIR/ghost_sentinel_execsnoop.py" &
-        echo $! > "$LOG_DIR/ebpf_monitor.pid"
-        log_info "eBPF process monitoring started"
-    fi
+    python3 "$SCRIPTS_DIR/ghost_sentinel_execsnoop.py" "$EBPF_LOG" "${WHITELIST_PROCESSES[@]}" &
+    echo $! > "$LOG_DIR/ebpf_monitor.pid"
+    log_info "eBPF process monitoring started"
 }
 
 stop_ebpf_monitoring() {
@@ -644,8 +646,8 @@ load_config_safe() {
     ENABLE_THREAT_INTEL=${ENABLE_THREAT_INTEL:-true}
 
     # Secure whitelists with exact matching
-    WHITELIST_PROCESSES=${WHITELIST_PROCESSES:-("firefox" "chrome" "nmap" "masscan" "nuclei" "gobuster" "ffuf" "subfinder" "httpx" "amass" "burpsuite" "wireshark" "metasploit" "sqlmap" "nikto" "dirb" "wpscan" "john" "docker" "containerd" "systemd" "kthreadd" "bash" "zsh" "ssh" "python3" "yara")}
-    CRITICAL_PATHS=${CRITICAL_PATHS:-("/etc/passwd" "/etc/shadow" "/etc/sudoers" "/etc/ssh/sshd_config" "/etc/hosts")}
+    [[ -v WHITELIST_PROCESSES ]] || WHITELIST_PROCESSES=("firefox" "chrome" "nmap" "masscan" "nuclei" "gobuster" "ffuf" "subfinder" "httpx" "amass" "burpsuite" "wireshark" "metasploit" "sqlmap" "nikto" "dirb" "wpscan" "john" "docker" "containerd" "systemd" "kthreadd" "bash" "zsh" "ssh" "python3" "yara")
+    [[ -v CRITICAL_PATHS ]] || CRITICAL_PATHS=("/etc/passwd" "/etc/shadow" "/etc/sudoers" "/etc/ssh/sshd_config" "/etc/hosts")
 
     # Load and validate config file
     if [[ -f "$CONFIG_FILE" ]]; then
@@ -658,7 +660,7 @@ load_config_safe() {
 }
 
 log_info() {
-    echo "<6>$1"
+    echo "$1"
 }
 
 log_alert() {
@@ -881,7 +883,7 @@ main_enhanced() {
     log_info "Running network monitoring..."
     monitor_network_advanced
 
-    if [[ "$HAS_YARA" == true ]]; then
+    if [[ "$HAS_YARA" == true ]] && [[ "$ENABLE_YARA" == true ]]; then
         log_info "Running file monitoring with YARA..."
         monitor_files_with_yara
     fi
