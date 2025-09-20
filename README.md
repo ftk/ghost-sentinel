@@ -27,13 +27,13 @@ Ghost Sentinel provides multi-layer security monitoring for Linux systems by com
 ```bash
 # Ubuntu/Debian
 sudo apt update
-sudo apt install yara bpftrace lsof python3 inotify-tools curl bpfcc-tools python-bpfcc
+sudo apt install yara bpftrace lsof python3 inotify-tools curl bpfcc-tools python-bpfcc unhide
 
 # Fedora/RHEL
 sudo dnf install yara inotify-tools bpftrace python3 curl
 
 # Arch Linux
-sudo pacman -S yara inotify-tools bpftrace python curl
+sudo pacman -S yara inotify-tools bpftrace python curl unhide
 ```
 
 ### Dependency Functions
@@ -42,6 +42,7 @@ sudo pacman -S yara inotify-tools bpftrace python curl
 - **bpfcc-tools**: eBPF kernel instrumentation
 - **python3**: Network honeypot implementation and advanced monitoring features
 - **curl**: Webhook notifications, suspicious IP list updates
+- **unhide**: Extra checks for hidden processes
 
 ## Installation
 
@@ -81,6 +82,7 @@ ENABLE_EBPF=true
 ENABLE_HONEYPOTS=true
 ENABLE_YARA=true
 ENABLE_THREAT_INTEL=true
+ENABLE_UNHIDE=true
 
 # Performance tuning
 PERFORMANCE_MODE=false
@@ -90,7 +92,6 @@ SEND_EMAIL=false
 EMAIL_RECIPIENT=""
 WEBHOOK_URL=""
 SLACK_WEBHOOK_URL=""
-SYSLOG_ENABLED=true
 TELEGRAM_BOT_TOKEN=""
 TELEGRAM_CHAT_ID=""
 

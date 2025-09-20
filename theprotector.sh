@@ -846,6 +846,17 @@ create_baseline() {
     log_info "Baseline created successfully"
 }
 
+run_unhide() {
+    if ! unhide-linux -v quick reverse procall sys 2>&1 | tee "$1"
+    then
+        log_alert $HIGH "Unhide-linux failed: $(cat "$1")"
+    fi
+    if ! unhide-tcp -flv 2>&1 | tee -a "$1"
+    then
+        log_alert $HIGH "Unhide-tcp failed: $(cat "$1")"
+    fi
+}
+
 main_enhanced() {
     declare start_time=$(date +%s)
     log_info "Ghost Sentinel v3 - Starting advanced security scan..."
@@ -886,6 +897,17 @@ main_enhanced() {
 
     log_info "Running memory monitoring..."
     monitor_memory
+
+    if command -v unhide-linux > /dev/null 2>&1 && [[ "${ENABLE_UNHIDE-true}" == "true" ]]
+    then
+        declare unhide_log_file
+        unhide_log_file="$LOG_DIR/unhide-$(date +%F).log"
+        if [[ ! -s $unhide_log_file ]]
+        then
+            log_info "Running daily unhide check..."
+            run_unhide "$unhide_log_file"
+        fi
+    fi
 
     declare end_time=$(date +%s)
     declare duration=$((end_time - start_time))
@@ -991,6 +1013,8 @@ StandardOutput=journal
 StandardError=journal
 Restart=on-success
 RestartSec=3
+# Unhide checks might take a while
+TimeoutStartSec=900
 
 [Install]
 WantedBy=multi-user.target
