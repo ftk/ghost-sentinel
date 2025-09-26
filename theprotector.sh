@@ -672,7 +672,7 @@ log_alert() {
     # Send alerts
     if [[ -n "$TELEGRAM_BOT_TOKEN" ]] && [[ -n "$TELEGRAM_CHAT_ID" ]]; then
         # Send to Telegram with bot token and chat ID
-        curl --max-time 10 --silent --show-error --fail -X POST --url "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" -d chat_id="${TELEGRAM_CHAT_ID}" -d text="$(hostname) ${level}: ${message}" >/dev/null || echo "<$ERROR>Telegram alert failed" >&2
+        curl --max-time 10 --silent --show-error --fail -X POST --url "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" --data-urlencode chat_id="${TELEGRAM_CHAT_ID}" --data-urlencode text="$(hostname) ${level}: ${message}" >/dev/null || echo "<$ERROR>Telegram alert failed" >&2
     fi
 
     # Email notification with fallback check
