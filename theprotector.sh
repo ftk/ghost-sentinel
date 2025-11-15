@@ -34,26 +34,13 @@ MEDIUM=4
 THREAT_INTEL_UPDATE_HOURS=6
 HONEYPOT_PORTS=("2222" "8080" "23" "21" "3389")
 
+
+trap stop_ebpf_monitoring EXIT INT TERM
+
 # Environment detection
 HAS_INOTIFY=false
 HAS_YARA=false
 HAS_BCC=false
-
-# Cleanup function for proper resource management
-cleanup() {
-    declare exit_code=$?
-
-    # Stop honeypots
-    stop_honeypots
-
-    # Stop eBPF monitoring
-    stop_ebpf_monitoring
-
-    exit $exit_code
-}
-trap cleanup EXIT INT TERM
-
-# Enhanced dependency checking
 check_dependencies() {
     # Check for inotify tools
     if command -v inotifywait >/dev/null 2>&1; then
@@ -310,24 +297,15 @@ EOF
 
     # Start eBPF monitoring in background
     python3 "$SCRIPTS_DIR/ghost_sentinel_execsnoop.py" "$EBPF_LOG" "${WHITELIST_PROCESSES[@]}" &
-    echo $! > "$LOG_DIR/ebpf_monitor.pid"
     log_info "eBPF process monitoring started"
 }
 
 stop_ebpf_monitoring() {
-    if [[ -f "$LOG_DIR/ebpf_monitor.pid" ]]; then
-        declare ebpf_pid=$(cat "$LOG_DIR/ebpf_monitor.pid" 2>/dev/null || echo "")
-        if [[ -n "$ebpf_pid" ]] && kill -0 "$ebpf_pid" 2>/dev/null; then
-            kill "$ebpf_pid" 2>/dev/null || true
-        fi
-        rm -f "$LOG_DIR/ebpf_monitor.pid"
-
-        if [[ -s "$EBPF_LOG" ]]; then
-            log_alert "$MEDIUM" "EBPF found $(wc -l < "$EBPF_LOG") suspicious execs: $(tail -n 1 "$EBPF_LOG")"
-            mv "$EBPF_LOG" "$EBPF_LOG.$(date +%FT%T).txt"
-        fi
+    if [[ -s "$EBPF_LOG" ]]; then
+        log_alert "$MEDIUM" "EBPF found $(wc -l < "$EBPF_LOG") suspicious execs: $(tail -n 1 "$EBPF_LOG")"
+        mv "$EBPF_LOG" "$EBPF_LOG.$(date +%FT%T).txt"
     fi
-    rm -f "$SCRIPTS_DIR/ghost_sentinel_execsnoop.py"
+    rm -f "$SCRIPTS_DIR/ghost_sentinel_execsnoop.py" || true
 }
 
 # Honeypot implementation for detecting scanning/attacks
@@ -361,22 +339,9 @@ start_honeypots() {
                 sleep 1
             done
         ) &
-
-        echo $! >> "$LOG_DIR/honeypot.pids"
     done
 
     log_info "Honeypots started on ports: ${HONEYPOT_PORTS[*]}"
-}
-
-stop_honeypots() {
-    if [[ -f "$LOG_DIR/honeypot.pids" ]]; then
-        while read pid; do
-            if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-                kill "$pid" 2>/dev/null || true
-            fi
-        done < "$LOG_DIR/honeypot.pids"
-        rm -f "$LOG_DIR/honeypot.pids"
-    fi
 }
 
 # Anti-evasion detection for advanced threats
@@ -777,6 +742,7 @@ update_threat_intelligence() {
 is_whitelisted_process() {
     declare process="$1"
     declare proc_basename=$(basename "$process" 2>/dev/null || echo "$process")
+    declare whitelisted
 
     for whitelisted in "${WHITELIST_PROCESSES[@]}"; do
         if [[ "$proc_basename" == "$whitelisted" ]]; then
