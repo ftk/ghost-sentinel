@@ -75,130 +75,531 @@ init_yara_rules() {
 
     # Create comprehensive YARA rules
     cat > "$YARA_RULES_DIR/malware_detection.yar" << 'EOF'
-rule Suspicious_Base64_Payload {
-    meta:
-        description = "Detects suspicious base64 encoded payloads"
-        severity = "high"
-    strings:
-        $b64_long = /[A-Za-z0-9+\/]{100,}={0,2}/ fullword
-        $eval = "eval"
-        $exec = "exec"
-        $decode = "base64"
-    condition:
-        $b64_long and ($eval or $exec or $decode)
-}
 
-rule Reverse_Shell_Patterns {
+import "pe"
+import "elf"
+import "hash"
+
+rule Enterprise_Malware_Detection {
     meta:
-        description = "Detects reverse shell command patterns"
+        description = "Enterprise-grade malware detection with multiple indicators"
+        author = "Ghost Sentinel"
+        severity = "high"
+        category = "malware"
+        tags = "enterprise,malware,detection"
+        minimum_yara = "3.8.0"
+        reference = "https://example.com/threat-report"  // Add real reference
+        date = "2024-01-08"
+    strings:
+        $obfuscation1 = { 58 6F 62 66 75 73 63 61 74 65 } // :obfuscate - exact hex match
+        $obfuscation2 = /\b(eval|base64_decode|gzinflate|str_rot13)\s*\(/ nocase  // Non-capturing, word-bound
+        $obfuscation3 = { 5B 27 5D 2E 5B 27 5D } // [''].[''] pattern
+        $shellcode1 = { B8 ?? ?? ?? ?? C1 C8 08 C1 C8 08 C1 C8 08 C1 C8 08 } // mov eax, imm32; ror eax, 8 (4x)
+        $shellcode2 = { 31 C0 50 68 } // xor eax,eax; push eax; push imm32
+        $shellcode3 = { 6A 0B 58 99 52 68 2F 2F 73 68 68 2F 62 69 6E 89 E3 89 C1 89 C2 CD 80 } // Linux execve shell
+        $memory1 = { 64 A1 30 00 00 00 } // mov eax, fs:[0x30] (PEB access)
+        $memory2 = { 8B 40 0C 8B 40 1C 8B 00 8B 00 8B 40 08 } // PEB->Ldr->InLoadOrderModuleList traversal
+        $anti_analysis1 = { 0F 31 } // rdtsc
+        $anti_analysis2 = { 0F A2 } // cpuid
+        $anti_analysis3 = /\b(IsDebuggerPresent|CheckRemoteDebuggerPresent|OutputDebugString)\b/ nocase fullword
+    condition:
+        filesize < 50MB and (  // Increased size limit for better coverage
+            (3 of ($obfuscation*)) or  // Stricter threshold
+            (any of ($shellcode*)) or
+            (2 of ($memory*)) or
+            (2 of ($anti_analysis*)) or
+            (pe.is_pe and pe.sections[0].name == ".text" and pe.sections[0].raw_data_size > 100KB) or
+            (elf.type == elf.ET_EXEC and elf.entry_point < 0x1000)  // Added ELF check
+        )
+}
+rule Advanced_Persistence_Mechanisms {
+    meta:
+        description = "Advanced persistence mechanism detection"
+        author = "Ghost Sentinel"
         severity = "critical"
+        category = "persistence"
+        tags = "enterprise,persistence,apt"
+        reference = "https://attack.mitre.org/techniques/T1547/"
+        date = "2026-01-08"
     strings:
-        $nc_bind = /nca?t? .*-l +-p +[0-9]+/
-        $nc_connect = /nca?t? .*[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ .*[0-9]+/
-        $bash_tcp = "/dev/tcp/"
-        $python_socket = "socket.socket(socket.AF_INET"
-        $perl_socket = "IO::Socket::INET"
-        $socat_reverse = /socat.*tcp.*exec/
-        $mknod_backpipe = /mknod.*backpipe.*p/
+        $reg1 = /SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run/ nocase fullword
+        $reg2 = /SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce/ nocase fullword
+        $reg3 = /SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer\\Run/ nocase fullword
+        $service1 = /\b(sc\.exe|net\.exe|powershell)\s+(create|start)/ nocase
+        $service2 = /New-Service\s+-/ nocase
+        $task1 = /\b(schtasks|schtasks\.exe)\s+/ nocase
+        $task2 = /at\.exe\s+/ nocase
+        $startup1 = /AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup/ nocase
+        $startup2 = /ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\StartUp/ nocase
+        $dll1 = /KnownDLLs/ nocase fullword
+        $dll2 = /AppInit_DLLs/ nocase fullword
+        $wmi1 = /winmgmts:\\root\\subscription/ nocase
+        $wmi2 = /ActiveScriptEventConsumer/ nocase fullword
+        $cron = /crontab\s+-l/ nocase  // Linux cron
+        $systemd = /systemctl\s+enable/ nocase  // Linux systemd
     condition:
-        any of them
+        filesize < 10MB and pe.is_pe and (any of them)
 }
-
-rule Webshell_Indicators {
+rule Enterprise_Crypto_Mining {
     meta:
-        description = "Detects common webshell patterns"
+        description = "Enterprise crypto mining detection with wallet patterns"
+        author = "Ghost Sentinel"
         severity = "high"
+        category = "cryptomining"
+        tags = "enterprise,miner,crypto"
+        reference = "https://attack.mitre.org/techniques/T1496/"
+        date = "2026-01-08"
     strings:
-        $php_eval = /eval\s*\(\s*\$_(GET|POST|REQUEST)/
-        $php_system = /system\s*\(\s*\$_(GET|POST|REQUEST)/
-        $php_passthru = /passthru\s*\(\s*\$_(GET|POST|REQUEST)/
-        $php_shell_exec = /shell_exec\s*\(\s*\$_(GET|POST|REQUEST)/
-        $asp_eval = "eval(Request"
-        $jsp_runtime = "Runtime.getRuntime().exec"
-        $generic_backdoor = /\$_(GET|POST)\[.*\]\s*=.*exec/
+        $pool1 = "stratum+tcp://" nocase
+        $pool2 = "stratum+ssl://" nocase
+        $pool3 = /\.mining\.pool/ nocase
+        $pool4 = /pool\.[a-z0-9]+\.com/ nocase  // More specific
+        $miner1 = "xmrig" nocase fullword
+        $miner2 = "cpuminer" nocase fullword
+        $miner3 = "ethminer" nocase fullword
+        $miner4 = "cgminer" nocase fullword
+        $miner5 = "bfgminer" nocase fullword
+        $wallet_btc = /[13][a-km-zA-HJ-NP-Z1-9]{25,34}/
+        $wallet_xmr = /[48][0-9AB][123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{93}/
+        $wallet_eth = /0x[a-fA-F0-9]{40}/
+        $wallet_sol = /So[0-9A-Za-z]{32,44}/  // Solana wallet
+        $algo1 = /\b(cryptonight|randomx|kawpow|ethash)\b/ nocase
+        $algo2 = /\b(scrypt|sha256|x11|equihash)\b/ nocase
+        $cmd1 = /--cpu-priority/ nocase
+        $cmd2 = /--threads/ nocase
+        $cmd3 = /--gpu/ nocase
     condition:
-        any of them
+        filesize < 10MB and (
+            (any of ($miner*)) or
+            (2 of ($pool*)) or
+            (any of ($wallet*)) or
+            (2 of ($algo*)) or
+            (3 of ($cmd*))
+        )
+}
+rule APT_Lateral_Movement_Advanced {
+    meta:
+        description = "Advanced APT lateral movement detection"
+        author = "Ghost Sentinel"
+        severity = "critical"
+        category = "apt"
+        tags = "enterprise,apt,lateral_movement"
+        reference = "https://attack.mitre.org/tactics/TA0008/"
+        date = "2026-01-08"
+    strings:
+        $tool1 = "mimikatz" nocase fullword
+        $tool2 = "bloodhound" nocase fullword
+        $tool3 = "sharphound" nocase
+        $tool4 = "cobaltstrike" nocase
+        $tool5 = "empire" nocase
+        $tool6 = "metasploit" nocase fullword
+        $tool7 = "sliver" nocase fullword
+        $tool8 = "havoc" nocase fullword
+        $ps1 = /\bIEX\s*\(/ nocase
+        $ps2 = /New-Object\s+Net\.WebClient/ nocase
+        $ps3 = /DownloadString\s*\(/ nocase
+        $ps4 = /Invoke-Expression/ nocase
+        $lotl1 = /bitsadmin\s+/ nocase
+        $lotl2 = /certutil\s+-urlcache/ nocase
+        $lotl3 = /mshta\s+/ nocase
+        $lotl4 = /rundll32\s+/ nocase
+        $recon1 = /nmap\s+/ nocase
+        $recon2 = /masscan\s+/ nocase
+        $recon3 = /zmap\s+/ nocase
+        $exfil1 = /rclone\s+/ nocase
+        $exfil2 = /megatools\s+/ nocase
+        $exfil3 = /scp\s+/ nocase
+    condition:
+        filesize < 10MB and pe.is_pe and (
+            (any of ($tool*)) or
+            (3 of ($ps*)) or
+            (2 of ($lotl*)) or
+            (any of ($recon*)) or
+            (2 of ($exfil*))
+        )
 }
 
-rule Crypto_Miner_Indicators {
+rule Enterprise_Ransomware_Indicators {
     meta:
-        description = "Detects cryptocurrency mining malware"
+        description = "Enterprise ransomware detection patterns"
+        author = "Ghost Sentinel"
+        severity = "critical"
+        category = "ransomware"
+        tags = "enterprise,ransomware,encryption"
+    strings:
+        $encrypt1 = /vssadmin\s+delete\s+shadows/ nocase
+        $encrypt2 = /wbadmin\s+delete\s+backup/ nocase
+        $encrypt3 = /bcdedit\s+\/set\s+{default}\s+recoveryenabled\s+no/ nocase
+        $ext1 = ".encrypted" nocase
+        $ext2 = ".locked" nocase
+        $ext3 = ".crypto" nocase
+        $ext4 = ".crypt" nocase
+        $ext5 = ".readme" nocase
+        $note1 = "your files have been encrypted" nocase
+        $note2 = "pay bitcoin" nocase
+        $note3 = "decrypt your files" nocase
+        $note4 = "bitcoin wallet" nocase
+        $note5 = "contact us" nocase
+        $note6 = "ransom" nocase
+        $note7 = "payment" nocase
+        $note8 = "private key" nocase
+        $family1 = "wannacry" nocase
+        $family2 = "ryuk" nocase
+        $family3 = "conti" nocase
+        $family4 = "lockbit" nocase
+        $crypto1 = /AES\s*256/ nocase
+        $crypto2 = /RSA\s*2048/ nocase
+    condition:
+        (2 of ($encrypt*)) or
+        (3 of ($ext*)) or
+        (2 of ($note*)) or
+        (any of ($family*)) or
+        (2 of ($crypto*))
+}
+
+rule Enterprise_Webshell_Detection {
+    meta:
+        description = "Advanced webshell detection for enterprise environments"
+        author = "Ghost Sentinel"
+        severity = "critical"
+        category = "webshell"
+        tags = "enterprise,webshell,backdoor"
+    strings:
+        $php1 = /(\$_(GET|POST|REQUEST)\s*\[.*\]\s*\(\s*\$_(GET|POST|REQUEST)\s*\[.*\]\s*\))/ nocase
+        $php2 = /eval\s*\(\s*base64_decode\s*\(/ nocase
+        $php3 = /system\s*\(\s*\$_(GET|POST|REQUEST)/ nocase
+        $php4 = /shell_exec\s*\(\s*\$_(GET|POST|REQUEST)/ nocase
+        $php5 = /passthru\s*\(\s*\$_(GET|POST|REQUEST)/ nocase
+        $php6 = /exec\s*\(\s*\$_(GET|POST|REQUEST)/ nocase
+        $asp1 = /eval\s*\(\s*request/ nocase
+        $asp2 = /execute\s*\(\s*request/ nocase
+        $asp3 = /response\.write\s*\(\s*server\.createobject/ nocase
+        $jsp1 = /Runtime\.getRuntime\(\)\.exec/ nocase
+        $jsp2 = /ProcessBuilder/ nocase
+        $generic1 = /password\s*=\s*['"]*admin['"]*/ nocase
+        $generic2 = /cmd\s*=\s*['"]*shell['"]*/ nocase
+        $generic3 = /upload\s*=\s*['"]*file['"]*/ nocase
+        $obfuscated1 = /\\x65\\x76\\x61\\x6c/ nocase // \x65\x76\x61\x6c = eval
+        $obfuscated2 = /\\x73\\x79\\x73\\x74\\x65\\x6d/ nocase // \x73\x79\x73\x74\x65\x6d = system
+    condition:
+        (3 of ($php*)) or
+        (2 of ($asp*)) or
+        (any of ($jsp*)) or
+        (3 of ($generic*)) or
+        (2 of ($obfuscated*))
+}
+rule Enterprise_Rootkit_Detection {
+    meta:
+        description = "Enterprise rootkit and kernel malware detection"
+        author = "Ghost Sentinel"
+        severity = "critical"
+        category = "rootkit"
+        tags = "enterprise,rootkit,kernel"
+    strings:
+        $kernel1 = /insmod\s+/ nocase
+        $kernel2 = /rmmod\s+/ nocase
+        $kernel3 = /modprobe\s+/ nocase
+        $syscall1 = "sys_call_table" nocase
+        $syscall2 = "syscall_hook" nocase
+        $syscall3 = "ftrace" nocase
+        $hide1 = "hide_process" nocase
+        $hide2 = "rootkit" nocase
+        $hide3 = "rk_" nocase
+        $dkom1 = "EPROCESS" nocase
+        $dkom2 = "KTHREAD" nocase
+        $dkom3 = "ActiveProcessLinks" nocase
+        $known1 = "suckit" nocase
+        $known2 = "phalanx" nocase
+        $known3 = "knark" nocase
+        $known4 = "adore" nocase
+        $known5 = "azazel" nocase
+        $known6 = "rkit" nocase
+        $known7 = "lrk" nocase
+        $known8 = "fu" nocase
+        $known9 = "suterusu" nocase
+        $known10 = "ghostkit" nocase
+        $known11 = "tuxkit" nocase
+        $known12 = "blackshades" nocase
+    condition:
+        (2 of ($kernel*)) or
+        (2 of ($syscall*)) or
+        (2 of ($hide*)) or
+        (2 of ($dkom*)) or
+        (any of ($known*))
+}
+rule Enterprise_Data_Exfiltration {
+    meta:
+        description = "Advanced data exfiltration detection"
+        author = "Ghost Sentinel"
         severity = "high"
+        category = "exfiltration"
+        tags = "enterprise,exfiltration,data_theft"
     strings:
-        $stratum1 = "stratum+tcp://"
-        $stratum2 = "stratum+ssl://"
-        $xmrig = /\bxmrig\b/
-        $cpuminer = "cpuminer"
-        $pool1 = "pool.supportxmr.com"
-        $pool2 = "xmr-usa-east1.nanopool.org"
-        $wallet = /\b[49][A-Za-z0-9]{94}\b/
-        $mining_algo = /\b(cryptonight|scrypt|sha256|x11)\b/
+        $cloud1 = /aws\s+s3\s+cp/ nocase
+        $cloud2 = /azcopy\s+/ nocase
+        $cloud3 = /gsutil\s+cp/ nocase
+        $cloud4 = /rclone\s+/ nocase
+        $dns1 = /nslookup\s+/ nocase
+        $dns2 = /dig\s+/ nocase
+        $dns3 = /dns2tcp/ nocase
+        $icmp1 = /ping\s+-p/ nocase
+        $icmp2 = /hping3/ nocase
+        $http1 = /curl\s+-F/ nocase
+        $http2 = /wget\s+--post-file/ nocase
+        $http3 = /python.*requests/ nocase
+        $ftp1 = /ftp\s+/ nocase
+        $ftp2 = /lftp\s+/ nocase
+        $ftp3 = /ncftp/ nocase
+        $email1 = /sendmail/ nocase
+        $email2 = /mail\s+/ nocase
+        $email3 = /mutt\s+/ nocase
+        $large1 = /dd\s+if=.*bs=.*count/ nocase
+        $large2 = /tar\s+.*\|\s+(nc|netcat)/ nocase
     condition:
-        any of them
+        (any of ($cloud*)) or
+        (2 of ($dns*)) or
+        (any of ($icmp*)) or
+        (2 of ($http*)) or
+        (2 of ($ftp*)) or
+        (2 of ($email*)) or
+        (any of ($large*))
 }
-
-rule Process_Injection_Techniques {
+rule Enterprise_Credential_Theft {
     meta:
-        description = "Detects process injection indicators"
-        severity = "medium"
+        description = "Enterprise credential theft and access detection"
+        author = "Ghost Sentinel"
+        severity = "critical"
+        category = "credentials"
+        tags = "enterprise,credentials,access"
     strings:
-        $ptrace = "ptrace"
-        $proc_mem = "/proc/*/mem"
-        $ld_preload = "LD_PRELOAD"
-        $dlopen = "dlopen"
-        $mmap_exec = "PROT_EXEC"
-        $shellcode = { 31 c0 50 68 }
+        $pwd1 = "mimikatz" nocase
+        $pwd2 = "sekurlsa::logonpasswords" nocase
+        $pwd3 = "lsadump::sam" nocase
+        $pwd4 = "lsadump::secrets" nocase
+        $keylog1 = "keylogger" nocase
+        $keylog2 = "GetAsyncKeyState" nocase
+        $keylog3 = "SetWindowsHookEx" nocase
+        $browser1 = "Chrome" nocase
+        $browser2 = "Login Data" nocase
+        $browser3 = "cookies.sqlite" nocase
+        $ssh1 = "id_rsa" nocase
+        $ssh2 = "authorized_keys" nocase
+        $ssh3 = ".ssh" nocase
+        $rdp1 = "rdp" nocase
+        $rdp2 = "mstsc" nocase
+        $rdp3 = "termsrv" nocase
+        $db1 = "mysql" nocase
+        $db2 = "postgresql" nocase
+        $db3 = "oracle" nocase
+        $db4 = "config" nocase
     condition:
-        any of them
-}
-
-rule Persistence_Mechanisms {
-    meta:
-        description = "Detects persistence establishment attempts"
-        severity = "medium"
-    strings:
-        $crontab = "crontab -e"
-        $systemd_service = ".service"
-        $bashrc = ".bashrc"
-        $profile = ".profile"
-        $ssh_keys = "authorized_keys"
-        $startup = "/etc/init.d/"
-        $rc_declare = "/etc/rc.local"
-    condition:
-        any of them
+        (2 of ($pwd*)) or
+        (2 of ($keylog*)) or
+        (3 of ($browser*)) or
+        (2 of ($ssh*)) or
+        (2 of ($rdp*)) or
+        (3 of ($db*))
 }
 EOF
-
-    # Create rules for specific threats
     cat > "$YARA_RULES_DIR/apt_indicators.yar" << 'EOF'
-rule APT_Lateral_Movement {
+rule APT_Lateral_Movement_Enterprise {
     meta:
-        description = "Detects APT lateral movement tools"
+        description = "Enterprise APT lateral movement detection with advanced patterns"
+        author = "Ghost Sentinel"
         severity = "critical"
+        category = "apt"
+        tags = "enterprise,apt,lateral_movement,advanced"
+        minimum_yara = "3.8.0"
     strings:
-        $psexec = "psexec"
-        $wmic = "wmic process call create"
-        $schtasks = "schtasks /create"
-        $powershell_encoded = "powershell -enc"
-        $mimikatz = "sekurlsa::logonpasswords"
-        $bloodhound = "SharpHound"
+        $apt_tool1 = "mimikatz" nocase
+        $apt_tool2 = "bloodhound" nocase
+        $apt_tool3 = "sharphound" nocase
+        $apt_tool4 = "cobaltstrike" nocase
+        $apt_tool5 = "empire" nocase
+        $apt_tool6 = "metasploit" nocase
+        $apt_tool7 = "powersploit" nocase
+        $apt_tool8 = "nishang" nocase
+        $empire1 = /\bIEX\s*\(\s*New-Object\s+Net\.WebClient/ nocase
+        $empire2 = /DownloadString\s*\(\s*['"]http/ nocase
+        $empire3 = /Invoke-Expression\s*\(\s*\$/ nocase
+        $beacon3 = /%2f%2f%2b%2f/ nocase // //+/ encoded
+        $lotl1 = /bitsadmin\s+\/transfer/ nocase
+        $lotl2 = /certutil\s+-urlcache\s+-split\s+-f/ nocase
+        $lotl3 = /mshta\s+javascript:/ nocase
+        $lotl4 = /rundll32\s+javascript:/ nocase
+        $lotl5 = /regsvr32\s+\/s\s+\/n\s+\/u\s+/ nocase
+        $recon1 = /nmap\s+-sS\s+-p-/ nocase
+        $recon2 = /masscan\s+/ nocase
+        $recon3 = /zmap\s+/ nocase
+        $recon4 = /nuclei\s+/ nocase
+        $fileless1 = /powershell\s+-nop\s+-exec\s+bypass/ nocase
+        $fileless2 = /wmic\s+process\s+call\s+create/ nocase
+        $fileless3 = /msbuild\s+\/nologo/ nocase
+        $memory1 = /reflective\s+loader/ nocase
+        $memory2 = /process\s+hollowing/ nocase
+        $memory3 = /atom\s+bombing/ nocase
     condition:
-        any of them
+        (any of ($apt_tool*)) or
+        (2 of ($empire*)) or
+        (any of ($beacon*)) or
+        (2 of ($lotl*)) or
+        (any of ($recon*)) or
+        (2 of ($fileless*)) or
+        (any of ($memory*))
 }
-
-rule Data_Exfiltration {
+rule Enterprise_Command_and_Control {
     meta:
-        description = "Detects data exfiltration attempts"
-        severity = "high"
+        description = "Enterprise C2 communication detection"
+        author = "Ghost Sentinel"
+        severity = "critical"
+        category = "c2"
+        tags = "enterprise,c2,command_control"
     strings:
-        $curl_upload = /curl .*-T.*http/
-        $wget_post = /wget .*--post-file/
-        $nc_file = /nca?t? .*<.*\/.*\//
-        $base64_pipe = /base64 .*\|.*curl/
-        $tar_remote = /tar .*\|.*nc/
-        $scp_remote = /scp .*@/
+        $dns1 = /dnscat/ nocase
+        $dns2 = /iodine/ nocase
+        $dns3 = /dns2tcp/ nocase
+        $http1 = /User-Agent:\s*Mozilla\/5\.0\s+\(compatible;\s*MSIE\s+9\.0/ nocase
+        $http2 = /Content-Type:\s*application\/octet-stream/ nocase
+        $http3 = /X-Requested-With:\s*XMLHttpRequest/ nocase
+        $https1 = /sslstrip/ nocase
+        $https2 = /bettercap/ nocase
+        $icmp1 = /icmptunnel/ nocase
+        $icmp2 = /hans/ nocase
+        $custom1 = /custom\s+protocol/ nocase
+        $custom2 = /protocol\s+obfuscation/ nocase
+        $framework1 = "covenant" nocase
+        $framework2 = "brute ratel" nocase
+        $framework3 = "sliver" nocase
+        $framework4 = "havoc" nocase
     condition:
-        any of them
+        (any of ($dns*)) or
+        (3 of ($http*)) or
+        (any of ($https*)) or
+        (any of ($icmp*)) or
+        (any of ($custom*)) or
+        (any of ($framework*))
+}
+rule Enterprise_Zero_Day_Exploits {
+    meta:
+        description = "Zero-day and N-day exploit detection patterns"
+        author = "Ghost Sentinel"
+        severity = "critical"
+        category = "exploit"
+        tags = "enterprise,exploit,zero_day"
+    strings:
+        $cve1 = /eternalblue/i nocase
+        $cve2 = /wannacry/i nocase
+        $cve3 = /notpetya/i nocase
+        $cve4 = /badrabbit/i nocase
+        $framework1 = /metasploit/i nocase
+        $framework2 = /exploit-db/i nocase
+        $framework3 = /rapid7/i nocase
+        $shellcode1 = { 31 C0 50 68 2F 2F 73 68 68 2F 62 69 6E 89 E3 50 53 89 E1 31 D2 B0 0B CD 80 } // Linux x86 execve
+        $shellcode2 = { FC E8 89 00 00 00 60 89 E5 31 D2 64 8B 52 30 8B 52 0C 8B 52 14 8B 72 28 0F B7 4A 26 31 FF 31 C0 AC 3C 61 7C 02 2C 20 C1 CF 0D 01 C7 E2 F0 52 57 8B 52 10 8B 42 3C 01 D0 8B 40 78 85 C0 74 4A 01 D0 50 8B 48 18 8B 58 20 01 D3 E3 3C 49 8B 34 8B 01 D6 31 FF 31 C0 AC C1 CF 0D 01 C7 38 E0 75 F4 03 7D F8 3B 7D 24 75 E2 58 8B 58 24 01 D3 66 8B 0C 4B 8B 58 1C 01 D3 8B 04 8B 01 D0 89 44 24 24 5B 5B 61 59 5A 51 FF E0 58 5F 5A 8B 12 EB 86 }
+        $heapspray1 = { 0C 0C 0C 0C } // NOP sled
+        $heapspray2 = { 90 90 90 90 } // NOP sled
+        $rop1 = { C3 } // ret
+        $rop2 = { C2 ?? ?? } // ret n
+        $rop3 = { FF E4 } // jmp esp
+    condition:
+        (any of ($cve*)) or
+        (any of ($framework*)) or
+        (any of ($shellcode*)) or
+        (2 of ($heapspray*)) or
+        (3 of ($rop*))
+}
+rule Enterprise_Insider_Threat {
+    meta:
+        description = "Insider threat and data theft detection"
+        author = "Ghost Sentinel"
+        severity = "high"
+        category = "insider"
+        tags = "enterprise,insider,data_theft"
+    strings:
+        $exfil1 = /rclone\s+/ nocase
+        $exfil2 = /megatools\s+/ nocase
+        $exfil3 = /rsync\s+/ nocase
+        $exfil4 = /scp\s+/ nocase
+        $archive1 = /tar\s+czf\s+/ nocase
+        $archive2 = /zip\s+-r\s+/ nocase
+        $archive3 = /7z\s+a\s+/ nocase
+        $large1 = /dd\s+if=.*of=.*bs=/ nocase
+        $large2 = /cp\s+.*\/dev\/null/ nocase
+        $usb1 = /\/dev\/sd[a-z]/ nocase
+        $usb2 = /\/media\// nocase
+        $usb3 = /\/mnt\// nocase
+        $cloud1 = /aws\s+s3\s+sync/ nocase
+        $cloud2 = /az\s+storage\s+blob\s+upload/ nocase
+        $cloud3 = /gsutil\s+rsync/ nocase
+        $email1 = /mutt\s+-a/ nocase
+        $email2 = /mail\s+-a/ nocase
+    condition:
+        (2 of ($exfil*)) or
+        (2 of ($archive*)) or
+        (any of ($large*)) or
+        (2 of ($usb*)) or
+        (any of ($cloud*)) or
+        (any of ($email*))
+}
+rule Enterprise_Container_Escape {
+    meta:
+        description = "Container escape and privilege escalation detection"
+        author = "Ghost Sentinel"
+        severity = "critical"
+        category = "container"
+        tags = "enterprise,container,escape,privilege"
+    strings:
+        $docker1 = /docker\.sock/ nocase
+        $docker2 = /var\/run\/docker\.sock/ nocase
+        $docker3 = /docker\s+run\s+--privileged/ nocase
+        $k8s1 = /kubectl\s+exec/ nocase
+        $k8s2 = /kubelet/ nocase
+        $k8s3 = /serviceaccount/ nocase
+        $mount1 = /\/proc\/1\/ns/ nocase
+        $mount2 = /setns/ nocase
+        $mount3 = /unshare/ nocase
+        $cap1 = /CAP_SYS_ADMIN/ nocase
+        $cap2 = /CAP_SYS_PTRACE/ nocase
+        $cap3 = /CAP_DAC_OVERRIDE/ nocase
+        $device1 = /\/dev\/mem/ nocase
+        $device2 = /\/dev\/kmem/ nocase
+        $device3 = /\/proc\/kcore/ nocase
+    condition:
+        (2 of ($docker*)) or
+        (2 of ($k8s*)) or
+        (2 of ($mount*)) or
+        (2 of ($cap*)) or
+        (any of ($device*))
+}
+rule Enterprise_Supply_Chain_Attack {
+    meta:
+        description = "Supply chain attack detection"
+        author = "Ghost Sentinel"
+        severity = "critical"
+        category = "supply_chain"
+        tags = "enterprise,supply_chain,dependency"
+    strings:
+        $package1 = /solarwinds/i nocase
+        $package2 = /ccleaner/i nocase
+        $package3 = /notepad\+\+.*installer/i nocase
+        $dep1 = /npm\s+install\s+.*@/ nocase
+        $dep2 = /pip\s+install\s+.*==/ nocase
+        $dep3 = /gem\s+install\s+.*-/ nocase
+        $registry1 = /registry\.yarnpkg\.com/ nocase
+        $registry2 = /registry\.npmjs\.org/ nocase
+        $registry3 = /pypi\.org/ nocase
+        $inject1 = /postinstall.*script/ nocase
+        $inject2 = /preinstall.*script/ nocase
+        $typo1 = /cross-env/i nocase
+        $typo2 = /crossenv/i nocase
+        $typo3 = /request/i nocase
+        $typo4 = /reques/i nocase
+    condition:
+        (any of ($package*)) or
+        (2 of ($dep*)) or
+        (2 of ($registry*)) or
+        (any of ($inject*)) or
+        (2 of ($typo*))
 }
 EOF
 
