@@ -315,7 +315,7 @@ rule Enterprise_Rootkit_Detection {
         $known5 = "azazel" nocase
         $known6 = "rkit" nocase
         $known7 = "lrk" nocase
-        $known8 = "fu" nocase
+        //$known8 = "fu" nocase
         $known9 = "suterusu" nocase
         $known10 = "ghostkit" nocase
         $known11 = "tuxkit" nocase
@@ -617,87 +617,365 @@ start_ebpf_monitoring() {
     fi
 
     log_info "Starting eBPF-based kernel monitoring..."
+    cat > "$SCRIPTS_DIR/ghost_sentinel_ebpf_monitor.py" << 'EOF'
 
-    # Monitor process execution
-    cat > "$SCRIPTS_DIR/ghost_sentinel_execsnoop.py" << 'EOF'
 #!/usr/bin/env python3
 import sys
 import time
+import json
+import threading
+import ipaddress
+from datetime import datetime
 from bcc import BPF
+from collections import defaultdict
+import socket
+import struct
 
-ebpf_log = sys.argv[1]
-whitelist = sys.argv[2:]
+class EnterpriseEBPFMonitor:
+    def __init__(self):
+        self.alerts = []
+        self.stats = defaultdict(int)
+        self.rate_limits = defaultdict(lambda: defaultdict(int))
+        self.last_alert_time = defaultdict(float)
+        # Immutable hash-based whitelist (SHA256 of binary)
+        self.whitelist_hashes = {
+            # Example: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+            # Add actual hashes for trusted binaries here
+        }
+        self.whitelisted_files = set()
+        self.suspicious_patterns = {
+            'exec': [
+                b'/dev/tcp', b'python -c', b'perl -e', b'bash -i', b'sh -i', b'base64 -d',
+                b'xmrig', b'cpuminer', b'stratum+tcp', b'cryptonight', b'randomx'
+            ],
+            'network': [
+                b'4444', b'1337', b'6667', b'31337', b'8080', b'9999'
+            ],
+            'file': [
+                b'/etc/passwd', b'/etc/shadow', b'/etc/sudoers', b'/root/.ssh',
+                b'/home/*/.ssh', b'/etc/crontab', b'/etc/rc.local'
+            ]
+        }
+    def is_whitelisted_process(self, comm, pid):
+        import hashlib, os
+        exe_path = f"/proc/{pid}/exe"
+        try:
+            if os.path.exists(exe_path):
+                with open(exe_path, 'rb') as f:
+                    data = f.read()
+                hashval = hashlib.sha256(data).hexdigest()
+                if hashval in self.whitelist_hashes:
+                    return True, hashval
+        except Exception:
+            pass
+        return False, None
 
-# eBPF program to monitor process execution
+    # No rate limiting for critical alerts
+
+    def log_alert(self, alert_type, severity, message, data=None):
+        alert = {
+            'timestamp': datetime.now().isoformat(),
+            'type': alert_type,
+            'severity': severity,
+            'message': message,
+            'data': data or {},
+            'hostname': socket.gethostname(),
+            'sensor': 'ebpf_monitor'
+        }
+        self.alerts.append(alert)
+        self.stats[f'{alert_type}_{severity}'] += 1
+        with open('$LOG_DIR/ebpf_alerts.jsonl', 'a') as f:
+            f.write(json.dumps(alert) + '\n')
+        if severity == 'CRITICAL':
+            print(f"[CRITICAL] {message}")
+
+def save_whitelisted_files():
+    try:
+        with open('$LOG_DIR/whitelisted_files.txt', 'w') as f:
+            for file in monitor.whitelisted_files:
+                f.write(file + '\n')
+    except:
+        pass
+
 bpf_text = """
 #include <uapi/linux/ptrace.h>
 #include <linux/sched.h>
 #include <linux/fs.h>
+#include <linux/net.h>
+#include <linux/socket.h>
+#include <net/sock.h>
+#include <net/inet_sock.h>
+#include <linux/in.h>
+#include <linux/tcp.h>
 
-struct data_t {
+struct exec_event_t {
     u32 pid;
     u32 ppid;
+    u32 uid;
+    u32 gid;
     char comm[TASK_COMM_LEN];
-    char filename[256];
+    char filename[128];
+    char args[128];
 };
 
-BPF_PERF_OUTPUT(events);
+struct network_event_t {
+    u32 pid;
+    u32 uid;
+    char comm[TASK_COMM_LEN];
+    u32 saddr;
+    u32 daddr;
+    u16 sport;
+    u16 dport;
+    u8 proto;
+    u8 state;
+};
+
+struct file_event_t {
+    u32 pid;
+    u32 uid;
+    char comm[TASK_COMM_LEN];
+    char filename[256];
+    u32 mode;
+    u32 flags;
+};
+
+BPF_PERF_OUTPUT(exec_events);
+BPF_PERF_OUTPUT(network_events);
+BPF_PERF_OUTPUT(file_events);
 
 int syscall__execve(struct pt_regs *ctx, const char __user *filename,
                     const char __user *const __user *argv,
                     const char __user *const __user *envp)
 {
-    struct data_t data = {};
+    struct exec_event_t event = {};
     struct task_struct *task;
 
-    data.pid = bpf_get_current_pid_tgid() >> 32;
+    event.pid = bpf_get_current_pid_tgid() >> 32;
+
     task = (struct task_struct *)bpf_get_current_task();
-    data.ppid = task->real_parent->tgid;
+    if (task) {
+        struct task_struct *parent = NULL;
+        bpf_probe_read(&parent, sizeof(parent), &task->real_parent);
+        if (parent) {
+            bpf_probe_read(&event.ppid, sizeof(event.ppid), &parent->tgid);
+        }
+    }
 
-    bpf_get_current_comm(&data.comm, sizeof(data.comm));
-    bpf_probe_read_user_str(&data.filename, sizeof(data.filename), filename);
+    event.uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
+    event.gid = bpf_get_current_uid_gid() >> 32;
+    bpf_get_current_comm(&event.comm, sizeof(event.comm));
+    bpf_probe_read_user_str(&event.filename, sizeof(event.filename), filename);
 
-    events.perf_submit(ctx, &data, sizeof(data));
+    char *arg_ptr;
+    int offset = 0;
+    for (int i = 1; i < 8 && offset < (int)sizeof(event.args) - 1; i++) {
+        bpf_probe_read_user(&arg_ptr, sizeof(arg_ptr), &argv[i]);
+        if (!arg_ptr)
+            break;
+
+        int len = bpf_probe_read_user_str(&event.args[offset],
+                                          sizeof(event.args) - offset,
+                                          arg_ptr);
+        if (len <= 0)
+            break;
+
+        offset += len - 1;                   /* skip trailing NUL */
+        if (offset < (int)sizeof(event.args) - 1)
+            event.args[offset++] = ' ';
+    }
+
+    exec_events.perf_submit(ctx, &event, sizeof(event));
+    return 0;
+}
+
+int kprobe__tcp_connect(struct pt_regs *ctx, struct sock *sk)
+{
+    struct network_event_t event = {};
+
+    /*
+     * FIX: don't call inet_sk(sk) -- BCC's rewriter mangles the inline
+     * kernel function into a runaway recursive bpf_probe_read() expression.
+     * `sk` is the first member of `struct inet_sock`, so a plain cast is
+     * exactly equivalent to what inet_sk() does.
+     */
+    struct inet_sock *inet = (struct inet_sock *)sk;
+
+    event.pid = bpf_get_current_pid_tgid() >> 32;
+    event.uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
+    bpf_get_current_comm(&event.comm, sizeof(event.comm));
+    event.saddr = inet->inet_saddr;
+    event.daddr = inet->inet_daddr;
+    event.sport = inet->inet_sport;
+    event.dport = inet->inet_dport;
+    event.proto = IPPROTO_TCP;
+    event.state = sk->sk_state;
+
+    network_events.perf_submit(ctx, &event, sizeof(event));
+    return 0;
+}
+
+int syscall__openat(struct pt_regs *ctx, int dfd, const char __user *filename,
+                    int flags, umode_t mode)
+{
+    struct file_event_t event = {};
+    event.pid = bpf_get_current_pid_tgid() >> 32;
+    event.uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
+    bpf_get_current_comm(&event.comm, sizeof(event.comm));
+    event.mode = mode;
+    event.flags = flags;
+    bpf_probe_read_user_str(&event.filename, sizeof(event.filename), filename);
+    file_events.perf_submit(ctx, &event, sizeof(event));
     return 0;
 }
 """
+monitor = EnterpriseEBPFMonitor()
 
-def print_event(cpu, data, size):
-    event = b["events"].event(data)
-    suspicious_patterns = [
-        b"ncat", b"/nc", b"netcat", b"socat", b"/dev/tcp", b"python -c", b"perl -e",
-        b"bash -i", b"sh -i", b"wget", b"curl", b"base64"
+def get_parent_comm(ppid):
+    try:
+        with open(f'/proc/{ppid}/comm', 'r') as f:
+            return f.read().strip()
+    except:
+        return None
+
+def print_exec_event(cpu, data, size):
+    event = b["exec_events"].event(data)
+    filename = event.filename.decode('utf-8', 'replace')
+    comm = event.comm.decode('utf-8', 'replace')
+    args = event.args.decode('utf-8', 'replace').strip()
+
+    whitelisted, hashval = monitor.is_whitelisted_process(comm, event.pid)
+    if whitelisted:
+        # Log forensics, but do not alert
+        forensic = {
+            'timestamp': datetime.now().isoformat(),
+            'type': 'WHITELISTED_EXEC',
+            'process': comm,
+            'pid': event.pid,
+            'hash': hashval,
+            'filename': filename,
+            'args': args
+        }
+        with open('$EBPF_LOG', 'a') as f:
+            f.write(json.dumps(forensic) + '\n')
+        return
+    suspicious = False
+    for pattern in monitor.suspicious_patterns['exec']:
+        if pattern in filename.encode() or pattern in args.encode():
+            suspicious = True
+            break
+    if event.uid != event.gid and event.uid == 0:
+        monitor.log_alert('PRIVILEGE_ESCALATION', 'HIGH',
+                         f'Potential privilege escalation: {comm} (PID: {event.pid}, UID: {event.uid})',
+                         {'pid': event.pid, 'uid': event.uid, 'command': comm, 'filename': filename})
+    if suspicious:
+        monitor.log_alert('SUSPICIOUS_EXEC', 'MEDIUM',
+                         f'Suspicious execution: {comm} {args}',
+                         {'pid': event.pid, 'ppid': event.ppid, 'command': comm, 'args': args})
+def print_network_event(cpu, data, size):
+    event = b["network_events"].event(data)
+    saddr = socket.inet_ntoa(struct.pack('<I', event.saddr))
+    daddr = socket.inet_ntoa(struct.pack('<I', event.daddr))
+    sport = socket.ntohs(event.sport)
+    dport = socket.ntohs(event.dport)
+    comm = event.comm.decode('utf-8', 'replace')
+
+    whitelisted, hashval = monitor.is_whitelisted_process(comm, event.pid)
+    if whitelisted:
+        forensic = {
+            'timestamp': datetime.now().isoformat(),
+            'type': 'WHITELISTED_NETWORK',
+            'process': comm,
+            'pid': event.pid,
+            'hash': hashval,
+            'src': f'{saddr}:{sport}',
+            'dst': f'{daddr}:{dport}',
+            'proto': 'TCP'
+        }
+        with open('$EBPF_LOG', 'a') as f:
+            f.write(json.dumps(forensic) + '\n')
+        return
+
+    suspicious_ports = [4444, 6667, 1337, 31337, 8080, 9999]
+    private_ranges = [
+        ('10.0.0.0', '10.255.255.255'),
+        ('172.16.0.0', '172.31.255.255'),
+        ('192.168.0.0', '192.168.255.255'),
+        ('127.0.0.0', '127.255.255.255')
     ]
 
+    is_private = False
+    for start, end in private_ranges:
+        if ipaddress.ip_address(daddr) >= ipaddress.ip_address(start) and ipaddress.ip_address(daddr) <= ipaddress.ip_address(end):
+            is_private = True
+            break
+
+    if (dport in suspicious_ports or sport in suspicious_ports) and not is_private:
+        monitor.log_alert('SUSPICIOUS_NETWORK', 'MEDIUM',
+                         f'Suspicious network connection: {comm} {saddr}:{sport} -> {daddr}:{dport}',
+                         {'pid': event.pid, 'src': f'{saddr}:{sport}', 'dst': f'{daddr}:{dport}', 'proto': 'TCP'})
+def print_file_event(cpu, data, size):
+    event = b["file_events"].event(data)
     filename = event.filename.decode('utf-8', 'replace')
     comm = event.comm.decode('utf-8', 'replace')
 
-    for pattern in suspicious_patterns:
-        if pattern in filename.encode() or pattern in comm.encode():
-            if not comm.encode() in whitelist:
-                with open(ebpf_log, 'a') as f:
-                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} SUSPICIOUS_EXEC: PID={event.pid} PPID={event.ppid} COMM={comm} FILE={filename}\n")
-                break
+    write_flags = [1, 2, 64, 65, 66, 577, 578, 1089, 1090]
+    is_write = any(event.flags & flag for flag in write_flags)
+
+    whitelisted, hashval = monitor.is_whitelisted_process(comm, event.pid)
+    if whitelisted:
+        forensic = {
+            'timestamp': datetime.now().isoformat(),
+            'type': 'WHITELISTED_FILE',
+            'process': comm,
+            'pid': event.pid,
+            'hash': hashval,
+            'filename': filename
+        }
+        with open('$EBPF_LOG', 'a') as f:
+            f.write(json.dumps(forensic) + '\n')
+        if is_write:
+            monitor.whitelisted_files.add(filename)
+        return
+
+    if filename.startswith(('/proc/', '/sys/', '/dev/pts/', '/tmp/.')):
+        return
+
+    sensitive_files = [
+        '/etc/passwd', '/etc/shadow', '/etc/sudoers', '/etc/crontab',
+        '/root/.ssh', '/home/.ssh', '/etc/rc.local', '/etc/hosts',
+        '/etc/fstab', '/boot/', '/etc/systemd/system/'
+    ]
+
+    for sensitive in sensitive_files:
+        if sensitive in filename and is_write:
+            monitor.log_alert('SENSITIVE_FILE_ACCESS', 'HIGH',
+                             f'Sensitive file write: {comm} wrote to {filename}',
+                             {'pid': event.pid, 'uid': event.uid, 'file': filename, 'command': comm, 'flags': event.flags})
+            break
 
 try:
     b = BPF(text=bpf_text)
-    execve_fnname = b.get_syscall_fnname("execve")
-    b.attach_kprobe(event=execve_fnname, fn_name="syscall__execve")
-
-    b["events"].open_perf_buffer(print_event)
-
+    b["exec_events"].open_perf_buffer(print_exec_event)
+    b["network_events"].open_perf_buffer(print_network_event)
+    b["file_events"].open_perf_buffer(print_file_event)
+    print("Enterprise eBPF monitoring started...")
+    counter = 0
     while True:
         try:
             b.perf_buffer_poll()
+            counter += 1
+            #if counter % 1000 == 0:
+                #save_whitelisted_files()
         except KeyboardInterrupt:
+            save_whitelisted_files()
+            print("\nStopping eBPF monitoring...")
             break
 except Exception as e:
-    print(f"eBPF monitoring error: {e}")
+    print(f"Enterprise eBPF monitoring error: {e}")
     sys.exit(1)
 EOF
-
     # Start eBPF monitoring in background
-    python3 "$SCRIPTS_DIR/ghost_sentinel_execsnoop.py" "$EBPF_LOG" "${WHITELIST_PROCESSES[@]}" &
+    python3 "$SCRIPTS_DIR/ghost_sentinel_ebpf_monitor.py" &
     log_info "eBPF process monitoring started"
 }
 
@@ -706,7 +984,7 @@ stop_ebpf_monitoring() {
         log_alert "$MEDIUM" "EBPF found $(wc -l < "$EBPF_LOG") suspicious execs: $(tail -n 1 "$EBPF_LOG")"
         mv "$EBPF_LOG" "$EBPF_LOG.$(date +%FT%T).txt"
     fi
-    rm -f "$SCRIPTS_DIR/ghost_sentinel_execsnoop.py" || true
+    rm -f "$SCRIPTS_DIR/ghost_sentinel_ebpf_monitor.py" || true
 }
 
 # Honeypot implementation for detecting scanning/attacks
@@ -870,7 +1148,7 @@ monitor_files_with_yara() {
                 # Perform YARA scan if available
                 if [[ "$HAS_YARA" == true ]]; then
                     declare yara_result=""
-                    yara_result+=$(yara --no-warnings --fast-scan --print-strings --recursive --compiled-rules "$YARA_RULES_DIR/rules.yarac" "$file" 2>/dev/null || echo "")
+                    yara_result=$(yara --no-warnings --fast-scan --print-strings --recursive --compiled-rules "$YARA_RULES_DIR/rules.yarac" "$file" 2>/dev/null | head -n 10 || echo "")
                     if [[ -n "$yara_result" ]]; then
                         log_alert $CRITICAL "YARA detection: $yara_result"
                         quarantine_file_forensic "$file"
@@ -900,7 +1178,7 @@ monitor_files_with_yara() {
             fi
 
             declare yara_result=""
-            yara_result=$(yara --no-warnings --fast-scan --print-strings --recursive --compiled-rules --timeout=1 --skip-larger=1048576 "$YARA_RULES_DIR/rules.yarac" "$file" 2>/dev/null || echo "")
+            yara_result=$(yara --no-warnings --fast-scan --print-strings --recursive --compiled-rules --timeout=1 --skip-larger=1048576 "$YARA_RULES_DIR/rules.yarac" "$file" 2>/dev/null | head -n 10 || echo "")
             if [[ -n "$yara_result" ]]; then
                 log_alert $CRITICAL "YARA detection: $yara_result"
                 quarantine_file_forensic "$file"
@@ -1038,7 +1316,7 @@ log_alert() {
     # Send alerts
     if [[ -n "$TELEGRAM_BOT_TOKEN" ]] && [[ -n "$TELEGRAM_CHAT_ID" ]]; then
         # Send to Telegram with bot token and chat ID
-        curl --max-time 10 --silent --show-error --fail -X POST --url "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" --data-urlencode chat_id="${TELEGRAM_CHAT_ID}" --data-urlencode text="$(hostname) ${level}: ${message}" >/dev/null || echo "<$ERROR>Telegram alert failed" >&2
+        curl --max-time 10 --silent --show-error --fail -X POST --url "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" --data-urlencode chat_id="${TELEGRAM_CHAT_ID}" --data-urlencode text="$(hostname) ${level}: ${message}" -o /dev/null || echo "<$ERROR>Telegram alert failed" >&2
     fi
 
     # Email notification with fallback check
