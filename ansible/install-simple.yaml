@@ -1,0 +1,62 @@
+# Run with: ansible-playbook install-ansible.yaml -i host1,host2, # <-- last comma is mandatory
+- name: Install and Configure Ghost Sentinel
+  hosts: all
+  become: yes
+  gather_facts: no
+  vars:
+    ghost_sentinel_dir: /opt/ghost-sentinel
+
+  tasks:
+    - name: Create ghost-sentinel directory
+      file:
+        path: "{{ ghost_sentinel_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: Copy theprotector.sh script
+      copy:
+        src: theprotector.sh
+        dest: "{{ ghost_sentinel_dir }}/theprotector.sh"
+        mode: '0700'
+
+    - name: Copy sentinel.conf file
+      copy:
+        src: sentinel.conf
+        dest: "{{ ghost_sentinel_dir }}/sentinel.conf"
+        mode: '0600'
+
+    - name: Stop ghost-sentinel service
+      shell: "if systemctl is-enabled --quiet ghost-sentinel.service; then systemctl stop ghost-sentinel.service; fi"
+
+    - name: Run theprotector.sh script with systemd option
+      command: "{{ ghost_sentinel_dir }}/theprotector.sh systemd"
+    # - name: Start ghost-sentinel
+      # command: "systemctl start ghost-sentinel.service"
+
+    - name: Enable and start ghost-sentinel service
+      systemd:
+        name: ghost-sentinel.service
+        enabled: yes
+        state: started
+        daemon_reload: yes
+
+    - name: Check ghost-sentinel service status
+      systemd:
+        name: ghost-sentinel.service
+      register: service_status
+
+    - name: Display service status
+      debug:
+        msg: "Ghost Sentinel service status: {{ service_status.status.ActiveState }}"
+        verbosity: 0
+
+    - name: Fail if service is not running
+      fail:
+        msg: "ghost-sentinel service is not running"
+      when: service_status.status.ActiveState != "active"
+
+  handlers:
+    - name: restart ghost-sentinel
+      systemd:
+        name: ghost-sentinel.service
+        state: restarted

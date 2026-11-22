@@ -1,0 +1,30 @@
+---
+- name: Uninstall ghost-sentinel service
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Stop and disable ghost-sentinel
+      ansible.builtin.systemd:
+        name: ghost-sentinel
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Remove ghost-sentinel unit file
+      ansible.builtin.file:
+        path: /etc/systemd/system/ghost-sentinel.service
+        state: absent
+
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Remove ghost-sentinel directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /var/log/ghost-sentinel
+        - /opt/ghost-sentinel
